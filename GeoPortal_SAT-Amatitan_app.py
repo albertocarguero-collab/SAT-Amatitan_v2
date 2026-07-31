@@ -673,6 +673,3 @@ with tab5:
         El sistema debe validarse con datos locales de campo, calendario agrícola, rendimientos y reportes de afectación.
         """
     )
-
-st.markdown("---")
-st.caption("MIALEMPA agente IA CRL sobre la Cuenca del río Lempa, El Salvador.")
