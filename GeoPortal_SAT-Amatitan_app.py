@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Geoportal Streamlit - SAT de sequia agricola, Microcuenca Amatitan.
-Version limpia para GitHub y Streamlit Cloud, sin paquete de mapas adicional.
+Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
+Versión final para GitHub + Streamlit Cloud, sin geemap.
 
-Componentes:
+Motor:
 - Google Earth Engine
-- CHIRPS para lluvia y SPI-3
-- MODIS NDVI para VCI
+- CHIRPS para precipitación y SPI-3
+- MODIS MOD13Q1 para VCI
 - FABDEM para pendiente
 - IISS y alerta integrada
 """
@@ -25,10 +25,10 @@ from streamlit_folium import st_folium
 
 
 # =============================================================================
-# CONFIGURACION GENERAL
+# CONFIGURACIÓN GENERAL
 # =============================================================================
 
-APP_TITLE = "SAT de Sequia Agricola - Microcuenca Amatitan"
+APP_TITLE = "SAT de Sequía Agrícola - Microcuenca Amatitán"
 PROJECT_ID_DEFAULT = "micuencaamatitan"
 
 RUTA_CUENCA = "projects/micuencaamatitan/assets/MicrocuencaAmatitan"
@@ -101,12 +101,16 @@ def inicializar_gee(project_id: str):
     """
     Inicializa Google Earth Engine.
 
-    Local:
+    Modo local:
         earthengine authenticate
         streamlit run app.py
 
-    Streamlit Cloud:
-        Configurar secrets con una cuenta de servicio.
+    Modo Streamlit Cloud:
+        Configurar secrets con cuenta de servicio:
+        [gee]
+        service_account = "..."
+        project = "micuencaamatitan"
+        private_key = "TU_LLAVE_PRIVADA"
     """
     try:
         if "gee" in st.secrets:
@@ -132,7 +136,7 @@ def inicializar_gee(project_id: str):
 
 @st.cache_resource(show_spinner=False)
 def cargar_assets():
-    """Carga microcuenca, drenaje y DEM desde assets de Earth Engine."""
+    """Carga microcuenca, red de drenaje y DEM desde Earth Engine Assets."""
     microcuenca = ee.FeatureCollection(RUTA_CUENCA)
     geom = microcuenca.geometry()
     drenaje = ee.FeatureCollection(RUTA_DRENAJE).filterBounds(geom)
@@ -145,11 +149,11 @@ def cargar_assets():
 
 
 # =============================================================================
-# FUNCIONES DE INDICADORES
+# INDICADORES DEL SAT
 # =============================================================================
 
 def calcular_pendiente(dem, geom):
-    """Calcula pendiente en grados usando proyeccion metrica UTM 16N."""
+    """Calcula pendiente en grados usando proyección métrica UTM 16N."""
     dem_metric = dem.reproject(crs=CRS_METRICO, scale=ESCALA_DEM)
     return ee.Terrain.slope(dem_metric).rename("Slope").clip(geom)
 
@@ -176,18 +180,13 @@ def lluvia_mensual_feature(year: int, month: int, geom):
 
     return ee.Feature(
         None,
-        {
-            "date": inicio.format("YYYY-MM-dd"),
-            "year": year,
-            "month": month,
-            "rainfall": lluvia_media,
-        },
+        {"date": inicio.format("YYYY-MM-dd"), "year": year, "month": month, "rainfall": lluvia_media},
     )
 
 
 @st.cache_data(show_spinner=False)
 def construir_serie_chirps(project_id: str, anio_inicio: int, anio_fin: int):
-    """Construye serie mensual CHIRPS y la guarda en cache."""
+    """Construye serie mensual CHIRPS y la guarda en caché."""
     ok, mensaje = inicializar_gee(project_id)
     if not ok:
         raise RuntimeError(mensaje)
@@ -208,7 +207,6 @@ def construir_serie_chirps(project_id: str, anio_inicio: int, anio_fin: int):
     df["date"] = pd.to_datetime(df["date"])
     df["rainfall"] = pd.to_numeric(df["rainfall"], errors="coerce")
     df = df.dropna(subset=["rainfall"]).sort_values("date").reset_index(drop=True)
-
     return df
 
 
@@ -224,23 +222,16 @@ def calcular_spi3_gamma(df_lluvia: pd.DataFrame):
     for mes in range(1, 13):
         idx = df["month_end"] == mes
         valores = df.loc[idx, "rain_3m"].dropna()
-
         if len(valores) < 10:
             continue
 
         prob_cero = (valores <= 0).sum() / len(valores)
         valores_pos = valores[valores > 0]
-
         if len(valores_pos) < 10:
             continue
 
         shape, loc, scale = st_stats.gamma.fit(valores_pos, floc=0)
-        parametros[mes] = {
-            "shape": shape,
-            "loc": loc,
-            "scale": scale,
-            "prob_cero": prob_cero,
-        }
+        parametros[mes] = {"shape": shape, "loc": loc, "scale": scale, "prob_cero": prob_cero}
 
         cdf_gamma = st_stats.gamma.cdf(df.loc[idx, "rain_3m"], shape, loc=loc, scale=scale)
         cdf = prob_cero + (1 - prob_cero) * cdf_gamma
@@ -250,7 +241,7 @@ def calcular_spi3_gamma(df_lluvia: pd.DataFrame):
 
 
 def calcular_spi3_actual(geom, parametros):
-    """Calcula SPI-3 de los ultimos tres meses completos."""
+    """Calcula SPI-3 de los últimos tres meses completos."""
     hoy = datetime.datetime.now()
     fecha_fin = ee.Date.fromYMD(hoy.year, hoy.month, 1)
     fecha_inicio = fecha_fin.advance(-3, "month")
@@ -277,15 +268,9 @@ def calcular_spi3_actual(geom, parametros):
     if params is None or lluvia_3m is None:
         return None, lluvia_3m, mes_ref, fecha_inicio_txt, fecha_fin_txt
 
-    cdf_gamma = st_stats.gamma.cdf(
-        lluvia_3m,
-        params["shape"],
-        loc=params["loc"],
-        scale=params["scale"],
-    )
+    cdf_gamma = st_stats.gamma.cdf(lluvia_3m, params["shape"], loc=params["loc"], scale=params["scale"])
     cdf = params["prob_cero"] + (1 - params["prob_cero"]) * cdf_gamma
     spi3 = st_stats.norm.ppf(np.clip(cdf, 0.0001, 0.9999))
-
     return spi3, lluvia_3m, mes_ref, fecha_inicio_txt, fecha_fin_txt
 
 
@@ -294,37 +279,28 @@ def clasificar_spi3(spi3: float, umbrales: dict):
     if spi3 is None:
         return 0, "Sin datos SPI-3"
     if spi3 <= umbrales["SPI3"]["emergencia"]:
-        return 4, "Emergencia climatica"
+        return 4, "Emergencia climática"
     if spi3 <= umbrales["SPI3"]["alerta"]:
-        return 3, "Alerta climatica"
+        return 3, "Alerta climática"
     if spi3 <= umbrales["SPI3"]["prealerta"]:
-        return 2, "Prealerta climatica"
+        return 2, "Prealerta climática"
     if spi3 <= umbrales["SPI3"]["vigilancia"]:
-        return 1, "Vigilancia climatica"
-    return 0, "Condicion climatica normal"
+        return 1, "Vigilancia climática"
+    return 0, "Condición climática normal"
 
 
 def obtener_mes_modis_disponible(geom, max_retroceso: int = 6):
-    """Busca el ultimo mes cerrado con MODIS disponible."""
+    """Busca el último mes cerrado con MODIS disponible."""
     hoy = datetime.datetime.now()
-
     for i in range(1, max_retroceso + 1):
         fecha = datetime.datetime(hoy.year, hoy.month, 1) - pd.DateOffset(months=i)
         year = int(fecha.year)
         month = int(fecha.month)
         inicio = ee.Date.fromYMD(year, month, 1)
         fin = inicio.advance(1, "month")
-
-        col = (
-            ee.ImageCollection("MODIS/061/MOD13Q1")
-            .filterDate(inicio, fin)
-            .filterBounds(geom)
-            .select("NDVI")
-        )
-
+        col = ee.ImageCollection("MODIS/061/MOD13Q1").filterDate(inicio, fin).filterBounds(geom).select("NDVI")
         if col.size().getInfo() > 0:
             return year, month
-
     return None, None
 
 
@@ -335,13 +311,7 @@ def calcular_vci_mes(geom, year: int, month: int):
 
     inicio = ee.Date.fromYMD(year, month, 1)
     fin = inicio.advance(1, "month")
-
-    col_actual = (
-        ee.ImageCollection("MODIS/061/MOD13Q1")
-        .filterDate(inicio, fin)
-        .filterBounds(geom)
-        .select("NDVI")
-    )
+    col_actual = ee.ImageCollection("MODIS/061/MOD13Q1").filterDate(inicio, fin).filterBounds(geom).select("NDVI")
 
     if col_actual.size().getInfo() == 0:
         return None
@@ -364,14 +334,7 @@ def calcular_vci_mes(geom, year: int, month: int):
     ndvi_max = hist.max().rename("NDVI_max").clip(geom)
     den = ndvi_max.subtract(ndvi_min).where(ndvi_max.subtract(ndvi_min).eq(0), 0.0001)
 
-    return (
-        ndvi_actual.subtract(ndvi_min)
-        .divide(den)
-        .multiply(100)
-        .clamp(0, 100)
-        .rename("VCI")
-        .clip(geom)
-    )
+    return ndvi_actual.subtract(ndvi_min).divide(den).multiply(100).clamp(0, 100).rename("VCI").clip(geom)
 
 
 def promedio_imagen(img, geom, banda: str, escala: int):
@@ -379,12 +342,7 @@ def promedio_imagen(img, geom, banda: str, escala: int):
     if img is None:
         return None
     try:
-        return img.reduceRegion(
-            reducer=ee.Reducer.mean(),
-            geometry=geom,
-            scale=escala,
-            maxPixels=1e9,
-        ).get(banda).getInfo()
+        return img.reduceRegion(reducer=ee.Reducer.mean(), geometry=geom, scale=escala, maxPixels=1e9).get(banda).getInfo()
     except Exception:
         return None
 
@@ -401,14 +359,13 @@ def clasificar_vci(vci: float, umbrales: dict):
         return 2, "Prealerta vegetativa"
     if vci < umbrales["VCI"]["vigilancia"]:
         return 1, "Vigilancia vegetativa"
-    return 0, "Condicion vegetativa normal"
+    return 0, "Condición vegetativa normal"
 
 
 def clasificar_vci_imagen(vci, geom):
-    """Clasifica VCI como imagen categorica."""
+    """Clasifica VCI como imagen categórica."""
     if vci is None:
         return ee.Image(0).rename("VCI_clase").clip(geom)
-
     return (
         ee.Image(0)
         .where(vci.lte(50).And(vci.gt(40)), 1)
@@ -422,12 +379,7 @@ def clasificar_vci_imagen(vci, geom):
 
 def normalizar_imagen(img, geom, nombre_banda: str, escala: int):
     """Normaliza imagen entre 0 y 1."""
-    stats = img.reduceRegion(
-        reducer=ee.Reducer.minMax(),
-        geometry=geom,
-        scale=escala,
-        maxPixels=1e9,
-    )
+    stats = img.reduceRegion(reducer=ee.Reducer.minMax(), geometry=geom, scale=escala, maxPixels=1e9)
     min_val = ee.Number(stats.get(f"{nombre_banda}_min"))
     max_val = ee.Number(stats.get(f"{nombre_banda}_max"))
     den = max_val.subtract(min_val).max(0.0001)
@@ -435,7 +387,7 @@ def normalizar_imagen(img, geom, nombre_banda: str, escala: int):
 
 
 def calcular_iiss(geom, pendiente):
-    """Calcula IISS con NDVI P10 historico y pendiente."""
+    """Calcula IISS con NDVI P10 histórico y pendiente."""
     hist = (
         ee.ImageCollection("MODIS/061/MOD13Q1")
         .filterDate(f"{ANIO_BASE_MODIS_INICIO}-01-01", f"{ANIO_BASE_MODIS_FIN}-12-31")
@@ -447,7 +399,6 @@ def calcular_iiss(geom, pendiente):
     ndvi_p10 = hist.reduce(ee.Reducer.percentile([10])).rename("NDVI_P10").clip(geom)
     vuln_veg = ee.Image(1).subtract(normalizar_imagen(ndvi_p10, geom, "NDVI_P10", ESCALA_MODIS))
     vuln_pend = normalizar_imagen(pendiente, geom, "Slope", ESCALA_DEM)
-
     iiss = vuln_veg.multiply(0.70).add(vuln_pend.multiply(0.30)).rename("IISS").clip(geom)
     return iiss, ndvi_p10
 
@@ -468,12 +419,10 @@ def clasificar_iiss(iiss, geom):
 def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
     """Integra SPI-3, VCI e IISS."""
     spi_img = ee.Image.constant(nivel_spi).rename("SPI_clase")
-
     vigilancia = spi_img.gte(1).Or(vci_clase.gte(1))
     prealerta = spi_img.gte(2).And(vci_clase.gte(2)).And(iiss_clase.gte(3))
     alerta = spi_img.gte(3).And(vci_clase.gte(3)).And(iiss_clase.gte(3))
     emergencia = spi_img.gte(4).And(vci_clase.gte(4)).And(iiss_clase.eq(4))
-
     return (
         ee.Image(0)
         .where(vigilancia, 1)
@@ -486,7 +435,7 @@ def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
 
 
 def area_por_clase(imagen_clase, geom, escala: int = ESCALA_MODIS):
-    """Calcula area por clase en hectareas."""
+    """Calcula área por clase en hectáreas."""
     area_img = ee.Image.pixelArea().addBands(imagen_clase)
     stats = area_img.reduceRegion(
         reducer=ee.Reducer.sum().group(groupField=1, groupName="clase"),
@@ -504,7 +453,6 @@ def area_por_clase(imagen_clase, geom, escala: int = ESCALA_MODIS):
         df = df.sort_values("clase")
         df["nivel"] = df["clase"].map(NOMBRES_ALERTA)
         df = df[["clase", "nivel", "area_ha"]]
-
     return df
 
 
@@ -513,15 +461,13 @@ def area_por_clase(imagen_clase, geom, escala: int = ESCALA_MODIS):
 # =============================================================================
 
 def obtener_centro_mapa(geom):
-    """Obtiene centro de geometria Earth Engine como [lat, lon]."""
+    """Obtiene centro de geometría Earth Engine como [lat, lon]."""
     coords = geom.centroid(maxError=1).coordinates().getInfo()
-    lon = coords[0]
-    lat = coords[1]
-    return [lat, lon]
+    return [coords[1], coords[0]]
 
 
 def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
-    """Agrega imagen Earth Engine como TileLayer de Folium."""
+    """Agrega una imagen Earth Engine como TileLayer de Folium."""
     map_id = ee.Image(ee_image).getMapId(vis_params)
     folium.raster_layers.TileLayer(
         tiles=map_id["tile_fetcher"].url_format,
@@ -534,12 +480,12 @@ def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
 
 
 def featurecollection_a_imagen(fc, color_value=1, width=2):
-    """Convierte FeatureCollection a imagen para mostrar lineas en Folium."""
+    """Convierte un FeatureCollection a imagen de líneas."""
     return ee.Image().byte().paint(featureCollection=fc, color=color_value, width=width)
 
 
 def construir_grafico_spi(df_spi: pd.DataFrame):
-    """Grafico historico SPI-3."""
+    """Construye gráfico histórico SPI-3."""
     df_plot = df_spi.dropna(subset=["SPI3"]).copy()
     df_plot["color"] = df_plot["SPI3"].apply(lambda x: "#d73027" if x < 0 else "#4575b4")
 
@@ -549,7 +495,7 @@ def construir_grafico_spi(df_spi: pd.DataFrame):
     ax.axhline(-1.0, color="orange", linestyle="--", label="SPI <= -1.0")
     ax.axhline(-1.5, color="red", linestyle="--", label="SPI <= -1.5")
     ax.axhline(-2.0, color="darkred", linestyle="--", label="SPI <= -2.0")
-    ax.set_title("SPI-3 historico - Microcuenca Amatitan")
+    ax.set_title("SPI-3 histórico - Microcuenca Amatitán")
     ax.set_xlabel("Fecha")
     ax.set_ylabel("SPI-3")
     ax.grid(axis="y", alpha=0.3)
@@ -613,6 +559,10 @@ with st.spinner("Calculando indicadores del SAT..."):
         pendiente = calcular_pendiente(dem, geom)
 
         df_lluvia = construir_serie_chirps(project_id, int(anio_inicio), int(anio_fin))
+        if df_lluvia.empty:
+            st.error("No se pudo construir la serie CHIRPS.")
+            st.stop()
+
         df_spi, parametros = calcular_spi3_gamma(df_lluvia)
         spi3_actual, lluvia_3m, mes_ref, fecha_ini, fecha_fin = calcular_spi3_actual(geom, parametros)
         nivel_spi, texto_spi = clasificar_spi3(spi3_actual, umbrales)
@@ -665,7 +615,6 @@ with tab2:
 
     centro = obtener_centro_mapa(geom)
     mapa = folium.Map(location=centro, zoom_start=13, control_scale=True, tiles=None)
-
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         attr="Esri World Imagery",
@@ -673,7 +622,6 @@ with tab2:
         overlay=False,
         control=True,
     ).add_to(mapa)
-
     folium.TileLayer("OpenStreetMap", name="OpenStreetMap", overlay=False, control=True).add_to(mapa)
 
     if mostrar_alerta:
@@ -690,10 +638,7 @@ with tab2:
     agregar_capa_ee(mapa, limite_img, {"palette": ["ffffff"]}, "Microcuenca", opacity=1.0)
     folium.LayerControl(collapsed=False).add_to(mapa)
     st_folium(mapa, width=None, height=650)
-
-    st.markdown("""
-    **Leyenda:** 🟢 Normal | 🟡 Vigilancia/Prealerta | 🟠 Alerta | 🔴 Emergencia
-    """)
+    st.markdown("**Leyenda:** 🟢 Normal | 🟡 Vigilancia/Prealerta | 🟠 Alerta | 🔴 Emergencia")
 
 with tab3:
     st.subheader("Serie SPI-3")
