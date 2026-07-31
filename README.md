@@ -20,7 +20,7 @@ streamlit run app.py
 En `Manage app > Settings > Secrets`, configura:
 
 [gee]
-service_account = "tu-cuenta-servicio@tu-proyecto.iam.gserviceaccount.com"
+service_account = "sat-amatitan@micuencaamatitan.iam.gserviceaccount.com"
 project = "micuencaamatitan"
 private_key = """
 -----BEGIN PRIVATE KEY-----
