@@ -29,3 +29,6 @@ TU_LLAVE_PRIVADA
 """
 
 La cuenta de servicio debe tener permiso de lectura sobre los assets de Earth Engine.
+projects/micuencaamatitan/assets/MicrocuencaAmatitan
+projects/micuencaamatitan/assets/RiosMicrocuencaAmatitan
+projects/micuencaamatitan/assets/FABDEM_TITIHUAPA
