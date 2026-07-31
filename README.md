@@ -32,3 +32,13 @@ La cuenta de servicio debe tener permiso de lectura sobre los assets de Earth En
 projects/micuencaamatitan/assets/MicrocuencaAmatitan
 projects/micuencaamatitan/assets/RiosMicrocuencaAmatitan
 projects/micuencaamatitan/assets/FABDEM_TITIHUAPA
+
+IAM:
+- Earth Engine Resource Viewer
+- Viewer opcional
+
+Earth Engine Assets:
+- Reader sobre MicrocuencaAmatitan
+- Reader sobre RiosMicrocuencaAmatitan
+- Reader sobre FABDEM_TITIHUAPA
+
