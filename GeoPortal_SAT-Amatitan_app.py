@@ -513,8 +513,7 @@ with st.sidebar:
     st.subheader("MODIS")
     max_retroceso_modis = st.slider("Meses atrás para buscar MODIS", 1, 12, 6)
 
-    st.subheader("Capas del mapa")
-    mostrar_alerta = st.checkbox("Alerta integrada", value=True)
+   st.subheader("Capas del mapa")
     mostrar_iiss = st.checkbox("IISS", value=True)
     mostrar_vci = st.checkbox("VCI actual", value=False)
     mostrar_drenaje = st.checkbox("Drenaje", value=True)
@@ -615,7 +614,7 @@ with tab2:
 
         # Capas individuales estables (sin saturación multibanda)
         if mostrar_iiss:
-            agregar_capa_ee(mapa, iiss, vis_iiss, "IISS", opacity=0.60)
+            agregar_capa_ee(mapa, iiss_clase, {"min": 1, "max": 4, "palette": ["fed976", "fd8d3c", "fc4e2a", "bd0026"]}, "IISS", opacity=0.60)
         if mostrar_vci and vci_actual is not None:
             agregar_capa_ee(mapa, vci_actual, vis_vci, "VCI actual", opacity=0.70)
         if mostrar_drenaje:
