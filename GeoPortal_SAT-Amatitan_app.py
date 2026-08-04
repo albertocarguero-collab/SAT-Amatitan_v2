@@ -502,7 +502,7 @@ def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
     # Si la imagen tiene una sola banda y se pasan parámetros de paleta, aplicamos visualize aquí
     if "palette" in vis_params and img_render.bandNames().size().getInfo() == 1:
         img_render = img_render.visualize(**vis_params)
-        # Pasamos vis_params limpio (o vacío si ya fue visualizada) de forma compatible
+        # Una vez visualizada en RGB, llamamos a getMapId() sin argumentos adicionales de paleta
         map_id = img_render.getMapId()
     else:
         map_id = img_render.getMapId(vis_params)
@@ -515,6 +515,7 @@ def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
         control=True,
         opacity=opacity,
     ).add_to(mapa)
+
 
 def featurecollection_a_imagen(fc, color_value=1, width=2):
     """Convierte un FeatureCollection a imagen de líneas."""
