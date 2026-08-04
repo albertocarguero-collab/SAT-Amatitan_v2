@@ -162,53 +162,55 @@ def lluvia_mensual_feature(year: int, month: int, geom):
     """Devuelve un ee.Feature con lluvia mensual promedio CHIRPS."""
     inicio = ee.Date.fromYMD(year, month, 1)
     fin = inicio.advance(1, "month")
-
-    lluvia = (
-        ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
-        .filterDate(inicio, fin)
-        .select("precipitation")
-        .sum()
-        .clip(geom)
-    )
-
-    lluvia_media = lluvia.reduceRegion(
+    lluvia = (ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+              .filterDate(inicio, fin)
+              .select("precipitation")
+              .sum()
+              .clip(geom)
+             )
+    
+    # reduceRegion devuelve {} si la imagen no tiene bandas (mes sin datos)
+    dict_media = lluvia.reduceRegion(
         reducer=ee.Reducer.mean(),
         geometry=geom,
         scale=ESCALA_CHIRPS,
         maxPixels=1e9,
-    ).get("precipitation")
-
-    return ee.Feature(
-        None,
-        {"date": inicio.format("YYYY-MM-dd"), "year": year, "month": month, "rainfall": lluvia_media},
     )
-
+    
+    # Combinamos con un diccionario por defecto para evitar el error de clave inexistente
+    dict_seguro = ee.Dictionary({"precipitation": -9999}).combine(dict_media)
+    lluvia_media = dict_seguro.get("precipitation")
+    
+    return ee.Feature(None, {
+        "date": inicio.format("YYYY-MM-dd"),
+        "year": year,
+        "month": month,
+        "rainfall": lluvia_media
+    })
 
 @st.cache_data(show_spinner=False)
 def construir_serie_chirps(project_id: str, anio_inicio: int, anio_fin: int):
-    """Construye serie mensual CHIRPS y la guarda en caché."""
-    ok, mensaje = inicializar_gee(project_id)
-    if not ok:
-        raise RuntimeError(mensaje)
-
-    _, geom, _, _ = cargar_assets()
+    # ... (Mantén tu código inicial de la función igual) ...
+    
     features = []
-
     for year in range(anio_inicio, anio_fin + 1):
         for month in range(1, 13):
             features.append(lluvia_mensual_feature(year, month, geom))
-
+            
     datos = ee.FeatureCollection(features).getInfo().get("features", [])
     df = pd.DataFrame([f["properties"] for f in datos])
-
+    
     if df.empty:
         return pd.DataFrame(columns=["date", "year", "month", "rainfall"])
-
+        
     df["date"] = pd.to_datetime(df["date"])
     df["rainfall"] = pd.to_numeric(df["rainfall"], errors="coerce")
+    
+    # NUEVA LÍNEA: Convertimos el flag de no-data a un nulo real de Pandas
+    df["rainfall"] = df["rainfall"].replace(-9999, np.nan)
+    
     df = df.dropna(subset=["rainfall"]).sort_values("date").reset_index(drop=True)
     return df
-
 
 def calcular_spi3_gamma(df_lluvia: pd.DataFrame):
     """Calcula SPI-3 con ajuste Gamma por mes calendario."""
@@ -245,20 +247,24 @@ def calcular_spi3_actual(geom, parametros):
     hoy = datetime.datetime.now()
     fecha_fin = ee.Date.fromYMD(hoy.year, hoy.month, 1)
     fecha_inicio = fecha_fin.advance(-3, "month")
-
-    lluvia = (
-        ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
-        .filterDate(fecha_inicio, fecha_fin)
-        .select("precipitation")
-        .sum()
-    )
-
-    lluvia_3m = lluvia.reduceRegion(
+    
+    lluvia = (ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+              .filterDate(fecha_inicio, fecha_fin)
+              .select("precipitation")
+              .sum()
+             )
+    
+    dict_3m = lluvia.reduceRegion(
         reducer=ee.Reducer.mean(),
         geometry=geom,
         scale=ESCALA_CHIRPS,
         maxPixels=1e9,
-    ).get("precipitation").getInfo()
+    )
+    
+    # Extracción segura
+    lluvia_3m = ee.Dictionary({"precipitation": -9999}).combine(dict_3m).get("precipitation").getInfo()
+    if lluvia_3m == -9999:
+        lluvia_3m = None
 
     mes_ref = int((datetime.datetime(hoy.year, hoy.month, 1) - pd.DateOffset(months=1)).month)
     fecha_inicio_txt = fecha_inicio.format("YYYY-MM-dd").getInfo()
