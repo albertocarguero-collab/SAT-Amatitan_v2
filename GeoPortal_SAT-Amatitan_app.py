@@ -651,22 +651,20 @@ with tab2:
 
         if mostrar_alerta:
             agregar_capa_ee(mapa, alerta_integrada, vis_alerta, "Alerta integrada", opacity=0.75)
-       
-    if mostrar_iiss:
-        agregar_capa_ee(mapa, iiss, vis_iiss, "IISS", opacity=0.60)
+        if mostrar_iiss:
+            agregar_capa_ee(mapa, iiss, vis_iiss, "IISS", opacity=0.60)
+        if mostrar_vci and vci_actual is not None:
+            agregar_capa_ee(mapa, vci_actual, vis_vci, "VCI actual", opacity=0.70)
+        if mostrar_drenaje:
+            drenaje_img = featurecollection_a_imagen(drenaje, width=2)
+            agregar_capa_ee(mapa, drenaje_img, {"palette": ["00ffff"]}, "Drenaje", opacity=1.0)
+            
+        limite_img = featurecollection_a_imagen(microcuenca, width=3)
+        agregar_capa_ee(mapa, limite_img, {"palette": ["ffffff"]}, "Microcuenca", opacity=1.0)
         
-    if mostrar_vci and vci_actual is not None:
-        agregar_capa_ee(mapa, vci_actual, vis_vci, "VCI actual", opacity=0.70)
-        
-    if mostrar_drenaje:
-        drenaje_img = featurecollection_a_imagen(drenaje, width=2)
-        agregar_capa_ee(mapa, drenaje_img, {"palette": ["00ffff"]}, "Drenaje", opacity=1.0)
-
-    limite_img = featurecollection_a_imagen(microcuenca, width=3)
-    agregar_capa_ee(mapa, limite_img, {"palette": ["ffffff"]}, "Microcuenca", opacity=1.0)
-    folium.LayerControl(collapsed=False).add_to(mapa)
-    st_folium(mapa, width=None, height=650)
-    st.markdown("**Leyenda:** 🟢 Normal | 🟡 Vigilancia/Prealerta | 🟠 Alerta | 🔴 Emergencia")
+        folium.LayerControl(collapsed=False).add_to(mapa)
+        st_folium(mapa, width=None, height=650)
+        st.markdown("**Leyenda:** 🟢 Normal | 🟡 Vigilancia/Prealerta | 🟠 Alerta | 🔴 Emergencia")
 
 with tab3:
     st.subheader("Serie SPI-3")
