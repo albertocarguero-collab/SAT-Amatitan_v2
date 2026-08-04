@@ -423,40 +423,6 @@ def clasificar_iiss(iiss, geom):
         .rename("IISS_clase")
         .clip(geom)
     )
-
-
-def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
-    """Integra SPI-3, VCI e IISS asegurando tipado y máscara limpia para GEE."""
-    # 1. Usar iiss_clase como base topológica
-    base = iiss_clase.multiply(0).toByte()
-
-    # 2. Forzar spi_img como un entero explícito (Byte) heredando la base
-    spi_img = base.add(int(nivel_spi)).toByte().rename("SPI_clase")
-
-    # 3. Combinar amenaza (SPI y VCI) evaluando el nivel máximo
-    amenaza = spi_img.max(vci_clase).toByte()
-
-    # 4. Definir condiciones lógicas con clases de tipo byte
-    vigilancia = amenaza.gte(1)
-    prealerta = amenaza.gte(2).And(iiss_clase.gte(3))
-    alerta = amenaza.gte(3).And(iiss_clase.gte(3))
-    emergencia = amenaza.gte(4).And(iiss_clase.eq(4))
-
-    # 5. Generar la imagen rasterizada base
-    alerta_img = (base
-        .where(vigilancia, 1)
-        .where(prealerta, 2)
-        .where(alerta, 3)
-        .where(emergencia, 4)
-        .toByte()
-        .rename("Alerta_Sequia")
-    )
-
-    # 6. DEVOLVER SIN .reproject() para no romper la generación de teselos en Folium
-    return (alerta_img
-        .updateMask(alerta_img.gte(0))
-        .clip(geom)
-    )
     
 def area_por_clase(imagen_clase, geom, escala: int = ESCALA_MODIS):
     """Calcula área por clase en hectáreas."""
@@ -599,7 +565,6 @@ with st.spinner("Calculando indicadores del SAT..."):
 
         iiss, ndvi_p10 = calcular_iiss(geom, pendiente)
         iiss_clase = clasificar_iiss(iiss, geom)
-        alerta_integrada = crear_alerta_integrada(nivel_spi, vci_clase, iiss_clase, geom)
         df_area = area_por_clase(alerta_integrada, geom, ESCALA_MODIS)
     except Exception as exc:
         st.error("Error durante el cálculo del SAT.")
@@ -632,8 +597,7 @@ with tab1:
         st.success("NORMAL: continuar monitoreo rutinario.")
 
 with tab2:
-        st.subheader("Mapa integrado de alerta")
-        vis_alerta = {"min": 0, "max": 4, "palette": [COLORES_ALERTA[i].replace("#", "") for i in range(5)]}
+        st.subheader("Capas de Monitoreo Independientes")
         vis_iiss = {"min": 0, "max": 1, "palette": ["ffffcc", "fed976", "fd8d3c", "fc4e2a", "bd0026", "800026"]}
         vis_vci = {"min": 0, "max": 100, "palette": ["red", "yellow", "green"]}
         
@@ -649,8 +613,7 @@ with tab2:
         ).add_to(mapa)
         folium.TileLayer("OpenStreetMap", name="OpenStreetMap", overlay=False, control=True).add_to(mapa)
 
-        if mostrar_alerta:
-            agregar_capa_ee(mapa, alerta_integrada, vis_alerta, "Alerta integrada", opacity=0.75)
+        # Capas individuales estables (sin saturación multibanda)
         if mostrar_iiss:
             agregar_capa_ee(mapa, iiss, vis_iiss, "IISS", opacity=0.60)
         if mostrar_vci and vci_actual is not None:
