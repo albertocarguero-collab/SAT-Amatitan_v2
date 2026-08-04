@@ -632,25 +632,25 @@ with tab1:
         st.success("NORMAL: continuar monitoreo rutinario.")
 
 with tab2:
-    st.subheader("Mapa integrado de alerta")
-   # Reemplazar los valores para quitar el "#"
-    vis_alerta = {"min": 0, "max": 4, "palette": [COLORES_ALERTA[i].replace("#", "") for i in range(5)]}
-    vis_iiss = {"min": 0, "max": 1, "palette": ["ffffcc", "fed976", "fd8d3c", "fc4e2a", "bd0026", "800026"]}
-    vis_vci = {"min": 0, "max": 100, "palette": ["red", "yellow", "green"]} # Los nombres CSS no dan problema
+        st.subheader("Mapa integrado de alerta")
+        vis_alerta = {"min": 0, "max": 4, "palette": [COLORES_ALERTA[i].replace("#", "") for i in range(5)]}
+        vis_iiss = {"min": 0, "max": 1, "palette": ["ffffcc", "fed976", "fd8d3c", "fc4e2a", "bd0026", "800026"]}
+        vis_vci = {"min": 0, "max": 100, "palette": ["red", "yellow", "green"]}
+        
+        centro = obtener_centro_mapa(geom)
+        mapa = folium.Map(location=centro, zoom_start=13, control_scale=True, tiles=None)
+        
+        folium.TileLayer(
+            tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            attr="Esri World Imagery",
+            name="Satélite",
+            overlay=False,
+            control=True,
+        ).add_to(mapa)
+        folium.TileLayer("OpenStreetMap", name="OpenStreetMap", overlay=False, control=True).add_to(mapa)
 
-    centro = obtener_centro_mapa(geom)
-    mapa = folium.Map(location=centro, zoom_start=13, control_scale=True, tiles=None)
-    folium.TileLayer(
-        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr="Esri World Imagery",
-        name="Satélite",
-        overlay=False,
-        control=True,
-    ).add_to(mapa)
-    folium.TileLayer("OpenStreetMap", name="OpenStreetMap", overlay=False, control=True).add_to(mapa)
-
-   if mostrar_alerta:
-        agregar_capa_ee(mapa, alerta_integrada, vis_alerta, "Alerta integrada", opacity=0.75)
+        if mostrar_alerta:
+            agregar_capa_ee(mapa, alerta_integrada, vis_alerta, "Alerta integrada", opacity=0.75)
        
     if mostrar_iiss:
         agregar_capa_ee(mapa, iiss, vis_iiss, "IISS", opacity=0.60)
