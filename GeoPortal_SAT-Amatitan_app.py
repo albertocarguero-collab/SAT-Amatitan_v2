@@ -428,7 +428,7 @@ def clasificar_iiss(iiss, geom):
 
 
 def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
-    """Integra SPI-3, VCI e IISS asegurando tipado, proyección y rasterización limpia para GEE."""
+    """Integra SPI-3, VCI e IISS asegurando tipado, proyección y máscara limpia para GEE."""
     
     # 1. Usar iiss_clase como base topológica para asegurar la escala correcta
     base = iiss_clase.multiply(0).toByte()
@@ -456,13 +456,12 @@ def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
         .rename("Alerta_Sequia")
     )
     
-    # 6. GARANTÍA DE RENDERIZADO WEB: Forzar proyección, recortar y estampar visualización previa
-    # Esto aplana el árbol computacional y previene el error EEException en getMapId()
+    # 6. GARANTÍA DE PROYECCIÓN: Forzar escala métrica, enmascarar y recortar (sin .visualize())
     return (
         alerta_img
         .reproject(crs=CRS_METRICO, scale=ESCALA_MODIS)
+        .updateMask(alerta_img.gte(0))
         .clip(geom)
-        .visualize(min=0, max=4, palette=[COLORES_ALERTA[i].replace("#", "") for i in range(5)])
     )
     
 def area_por_clase(imagen_clase, geom, escala: int = ESCALA_MODIS):
@@ -498,8 +497,14 @@ def obtener_centro_mapa(geom):
 
 
 def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
-    """Agrega una imagen Earth Engine como TileLayer de Folium."""
-    map_id = ee.Image(ee_image).getMapId(vis_params)
+    """Agrega una imagen Earth Engine como TileLayer de Folium aplicando visualización segura."""
+    # Si la imagen tiene una sola banda y se pasan parámetros de paleta, aplicamos visualize aquí
+    img_render = ee.Image(ee_image)
+    if "palette" in vis_params and img_render.bandNames().size().getInfo() == 1:
+        img_render = img_render.visualize(**vis_params)
+        
+    map_id = img_render.getMapId() if "palette" in vis_params else img_render.getMapId(vis_params)
+    
     folium.raster_layers.TileLayer(
         tiles=map_id["tile_fetcher"].url_format,
         attr="Google Earth Engine",
