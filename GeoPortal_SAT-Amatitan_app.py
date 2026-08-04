@@ -495,14 +495,6 @@ def obtener_centro_mapa(geom):
     coords = geom.centroid(maxError=1).coordinates().getInfo()
     return [coords[1], coords[0]]
 
-st.write("DEBUG alerta_integrada:", alerta_integrada)
-
-try:
-    st.write(alerta_integrada.bandNames().getInfo())
-except Exception as e:
-    st.error(f"Error bandas alerta_integrada: {e}")
-
-
 def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
     """Agrega una imagen Earth Engine como TileLayer de Folium aplicando visualización segura."""
     img_render = ee.Image(ee_image)
