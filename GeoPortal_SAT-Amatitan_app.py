@@ -506,27 +506,28 @@ st.caption("Google Earth Engine + CHIRPS + MODIS + FABDEM + SPI-3 + VCI + IISS")
 with st.sidebar:
     st.header("Configuración")
     project_id = st.text_input("Proyecto Google Earth Engine", value=PROJECT_ID_DEFAULT)
-
+    
     st.subheader("Línea base SPI-3")
     anio_inicio = st.number_input("Año inicial", min_value=1981, max_value=2023, value=ANIO_BASE_SPI_INICIO, step=1)
     anio_fin = st.number_input("Año final", min_value=1990, max_value=ANIO_BASE_SPI_FIN, value=ANIO_BASE_SPI_FIN, step=1)
+    
     st.subheader("MODIS")
     max_retroceso_modis = st.slider("Meses atrás para buscar MODIS", 1, 12, 6)
-
-   st.subheader("Capas del mapa")
+    
+    st.subheader("Capas del mapa")
     mostrar_iiss = st.checkbox("IISS", value=True)
     mostrar_vci = st.checkbox("VCI actual", value=False)
     mostrar_drenaje = st.checkbox("Drenaje", value=True)
-
+    
     st.subheader("Umbrales")
     usar_sensibles = st.checkbox("Usar umbrales sensibles de fase piloto", value=False)
     umbrales = UMBRALES_SENSIBLES if usar_sensibles else UMBRALES_ESTANDAR
-
+    
     if st.button("Limpiar caché y recalcular"):
         st.cache_data.clear()
         st.cache_resource.clear()
         st.rerun()
-
+        
 ok, mensaje = inicializar_gee(project_id)
 if not ok:
     st.error(mensaje)
