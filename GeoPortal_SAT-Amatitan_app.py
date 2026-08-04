@@ -565,7 +565,7 @@ with st.spinner("Calculando indicadores del SAT..."):
 
         iiss, ndvi_p10 = calcular_iiss(geom, pendiente)
         iiss_clase = clasificar_iiss(iiss, geom)
-        df_area = area_por_clase(alerta_integrada, geom, ESCALA_MODIS)
+        df_area = area_por_clase(iiss_clase, geom, ESCALA_MODIS)
     except Exception as exc:
         st.error("Error durante el cálculo del SAT.")
         st.exception(exc)
