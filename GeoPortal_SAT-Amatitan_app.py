@@ -153,9 +153,9 @@ def cargar_assets():
 # =============================================================================
 
 def calcular_pendiente(dem, geom):
-    """Calcula pendiente en grados usando proyección métrica UTM 16N."""
-    dem_metric = dem.reproject(crs=CRS_METRICO, scale=ESCALA_DEM)
-    return ee.Terrain.slope(dem_metric).rename("Slope").clip(geom)
+    """Calcula pendiente en grados de forma nativa para evitar colapso en mosaicos web."""
+    # ee.Terrain.slope ajusta correctamente los grados sin necesidad de reproyectar
+    return ee.Terrain.slope(dem).rename("Slope").clip(geom)
 
 
 def lluvia_mensual_feature(year: int, month: int, geom):
@@ -371,13 +371,11 @@ def clasificar_vci(vci: float, umbrales: dict):
 def clasificar_vci_imagen(vci, geom):
     """Clasifica VCI como imagen categórica conservando proyección."""
     if vci is None:
-        # Si no hay datos, creamos una constante pero le forzamos la proyección correcta
-        return ee.Image.constant(0).reproject(crs=CRS_METRICO, scale=ESCALA_MODIS).rename("VCI_clase").clip(geom)
+        return ee.Image.constant(0).rename("VCI_clase").clip(geom)
     
     # Heredamos la proyección multiplicando por 0
     base = vci.multiply(0)
-    return (
-        base
+    return (base
         .where(vci.lte(50).And(vci.gt(40)), 1)
         .where(vci.lte(40).And(vci.gt(30)), 2)
         .where(vci.lte(30).And(vci.gt(20)), 3)
@@ -651,15 +649,15 @@ with tab2:
     ).add_to(mapa)
     folium.TileLayer("OpenStreetMap", name="OpenStreetMap", overlay=False, control=True).add_to(mapa)
 
-    if mostrar_alerta:
-        # Pre-renderizamos la imagen a RGB en el servidor para evitar que la API de nubes colapse
-        alerta_rgb = alerta_integrada.visualize(**vis_alerta)
-        agregar_capa_ee(mapa, alerta_rgb, {}, "Alerta integrada", opacity=0.75)
-
+   if mostrar_alerta:
+        agregar_capa_ee(mapa, alerta_integrada, vis_alerta, "Alerta integrada", opacity=0.75)
+       
     if mostrar_iiss:
         agregar_capa_ee(mapa, iiss, vis_iiss, "IISS", opacity=0.60)
+        
     if mostrar_vci and vci_actual is not None:
         agregar_capa_ee(mapa, vci_actual, vis_vci, "VCI actual", opacity=0.70)
+        
     if mostrar_drenaje:
         drenaje_img = featurecollection_a_imagen(drenaje, width=2)
         agregar_capa_ee(mapa, drenaje_img, {"palette": ["00ffff"]}, "Drenaje", opacity=1.0)
