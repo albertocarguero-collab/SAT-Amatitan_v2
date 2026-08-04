@@ -428,15 +428,24 @@ def clasificar_iiss(iiss, geom):
 
 
 def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
-    """Integra SPI-3, VCI e IISS conservando proyección."""
-    spi_img = ee.Image.constant(nivel_spi).rename("SPI_clase")
-    vigilancia = spi_img.gte(1).Or(vci_clase.gte(1))
-    prealerta = spi_img.gte(2).And(vci_clase.gte(2)).And(iiss_clase.gte(3))
-    alerta = spi_img.gte(3).And(vci_clase.gte(3)).And(iiss_clase.gte(3))
-    emergencia = spi_img.gte(4).And(vci_clase.gte(4)).And(iiss_clase.eq(4))
+    """Integra SPI-3, VCI e IISS conservando proyección y lógica de UI."""
     
-    # Usamos iiss_clase como base topológica para evitar perder escala
+    # 1. Usar iiss_clase como base topológica para no perder la escala de MODIS/DEM
     base = iiss_clase.multiply(0)
+    
+    # 2. Crear spi_img SUMANDO a la base. Así hereda automáticamente la proyección correcta
+    spi_img = base.add(nivel_spi).rename("SPI_clase")
+    
+    # 3. Combinar amenaza (SPI y VCI) evaluando el peor escenario (máximo nivel)
+    # Esto hace que el mapa coincida con la lógica de tu interfaz
+    amenaza = spi_img.max(vci_clase)
+    
+    # 4. Definir condiciones combinando la amenaza climática/vegetativa con la vulnerabilidad (IISS)
+    vigilancia = amenaza.gte(1)
+    prealerta = amenaza.gte(2).And(iiss_clase.gte(3))
+    alerta = amenaza.gte(3).And(iiss_clase.gte(3))
+    emergencia = amenaza.gte(4).And(iiss_clase.eq(4))
+    
     return (
         base
         .where(vigilancia, 1)
