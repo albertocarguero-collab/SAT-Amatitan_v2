@@ -496,11 +496,15 @@ def obtener_centro_mapa(geom):
     return [coords[1], coords[0]]
 
 def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
-    """Agrega una imagen Earth Engine como TileLayer de Folium utilizando vis_params nativo."""
+    """Agrega una imagen Earth Engine como TileLayer de Folium aplicando visualización segura."""
     img_render = ee.Image(ee_image)
     
-    # Solicitamos los teselos directamente aplicando los vis_params de forma nativa a la imagen
-    map_id = img_render.getMapId(vis_params)
+    # Si se pasa una paleta, forzamos la visualización segura en el servidor
+    if "palette" in vis_params:
+        img_render = img_render.visualize(**vis_params)
+        map_id = img_render.getMapId()
+    else:
+        map_id = img_render.getMapId(vis_params)
     
     folium.raster_layers.TileLayer(
         tiles=map_id["tile_fetcher"].url_format,
@@ -510,7 +514,8 @@ def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
         control=True,
         opacity=opacity,
     ).add_to(mapa)
-def featurecollection_a_imagen(fc, color_value=1, width=2):
+    
+    def featurecollection_a_imagen(fc, color_value=1, width=2):
     """Convierte un FeatureCollection a imagen de líneas."""
     return ee.Image().byte().paint(featureCollection=fc, color=color_value, width=width)
 
@@ -656,7 +661,8 @@ with tab2:
     folium.TileLayer("OpenStreetMap", name="OpenStreetMap", overlay=False, control=True).add_to(mapa)
 
     if mostrar_alerta:
-        agregar_capa_ee(mapa, alerta_integrada, vis_alerta, "Alerta integrada", opacity=0.75)
+        agregar_capa_ee(mapa, alerta_integrada.toByte(), vis_alerta, "Alerta integrada", opacity=0.75)
+
     if mostrar_iiss:
         agregar_capa_ee(mapa, iiss, vis_iiss, "IISS", opacity=0.60)
     if mostrar_vci and vci_actual is not None:
