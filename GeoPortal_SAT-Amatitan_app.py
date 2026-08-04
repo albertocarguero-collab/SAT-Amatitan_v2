@@ -456,15 +456,11 @@ def obtener_centro_mapa(geom):
     return [coords[1], coords[0]]
 
 def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
-    """Agrega una imagen Earth Engine como TileLayer de Folium renderizada a RGB de forma segura."""
+    """Agrega una imagen Earth Engine como TileLayer de Folium de forma segura usando getMapId."""
     img_render = ee.Image(ee_image)
     
-    # Pre-renderizamos la imagen a RGB usando los parámetros de visualización en el servidor
-    if vis_params:
-        img_render = img_render.visualize(**vis_params)
-        
-    # Solicitamos el mapId de la imagen ya rasterizada a RGB, evitando conflictos en la API
-    map_id = img_render.getMapId()
+    # Pasamos los parámetros de visualización directamente a getMapId utilizando la proyección web estándar
+    map_id = img_render.getMapId(vis_params)
     
     folium.raster_layers.TileLayer(
         tiles=map_id["tile_fetcher"].url_format,
