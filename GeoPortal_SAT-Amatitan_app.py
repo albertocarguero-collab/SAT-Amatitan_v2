@@ -515,10 +515,9 @@ def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
         opacity=opacity,
     ).add_to(mapa)
     
-    def featurecollection_a_imagen(fc, color_value=1, width=2):
+def featurecollection_a_imagen(fc, color_value=1, width=2):
     """Convierte un FeatureCollection a imagen de líneas."""
     return ee.Image().byte().paint(featureCollection=fc, color=color_value, width=width)
-
 
 def construir_grafico_spi(df_spi: pd.DataFrame):
     """Construye gráfico histórico SPI-3."""
