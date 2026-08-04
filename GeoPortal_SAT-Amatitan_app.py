@@ -526,8 +526,7 @@ with st.sidebar:
 
     st.subheader("Línea base SPI-3")
     anio_inicio = st.number_input("Año inicial", min_value=1981, max_value=2023, value=ANIO_BASE_SPI_INICIO, step=1)
-    anio_fin = st.number_input("Año final", min_value=1990, max_value=2025, value=ANIO_BASE_SPI_FIN, step=1)
-
+    anio_fin = st.number_input("Año final", min_value=1990, max_value=ANIO_BASE_SPI_FIN, value=ANIO_BASE_SPI_FIN, step=1)
     st.subheader("MODIS")
     max_retroceso_modis = st.slider("Meses atrás para buscar MODIS", 1, 12, 6)
 
