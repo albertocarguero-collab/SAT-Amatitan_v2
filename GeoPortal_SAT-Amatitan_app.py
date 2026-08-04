@@ -363,11 +363,15 @@ def clasificar_vci(vci: float, umbrales: dict):
 
 
 def clasificar_vci_imagen(vci, geom):
-    """Clasifica VCI como imagen categórica."""
+    """Clasifica VCI como imagen categórica conservando proyección."""
     if vci is None:
-        return ee.Image(0).rename("VCI_clase").clip(geom)
+        # Si no hay datos, creamos una constante pero le forzamos la proyección correcta
+        return ee.Image.constant(0).reproject(crs=CRS_METRICO, scale=ESCALA_MODIS).rename("VCI_clase").clip(geom)
+    
+    # Heredamos la proyección multiplicando por 0
+    base = vci.multiply(0)
     return (
-        ee.Image(0)
+        base
         .where(vci.lte(50).And(vci.gt(40)), 1)
         .where(vci.lte(40).And(vci.gt(30)), 2)
         .where(vci.lte(30).And(vci.gt(20)), 3)
@@ -404,9 +408,10 @@ def calcular_iiss(geom, pendiente):
 
 
 def clasificar_iiss(iiss, geom):
-    """Clasifica IISS en cuatro clases."""
+    """Clasifica IISS en cuatro clases conservando proyección."""
+    base = iiss.multiply(0)
     return (
-        ee.Image(0)
+        base
         .where(iiss.gt(0).And(iiss.lte(0.40)), 1)
         .where(iiss.gt(0.40).And(iiss.lte(0.60)), 2)
         .where(iiss.gt(0.60).And(iiss.lte(0.80)), 3)
@@ -417,14 +422,17 @@ def clasificar_iiss(iiss, geom):
 
 
 def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
-    """Integra SPI-3, VCI e IISS."""
+    """Integra SPI-3, VCI e IISS conservando proyección."""
     spi_img = ee.Image.constant(nivel_spi).rename("SPI_clase")
     vigilancia = spi_img.gte(1).Or(vci_clase.gte(1))
     prealerta = spi_img.gte(2).And(vci_clase.gte(2)).And(iiss_clase.gte(3))
     alerta = spi_img.gte(3).And(vci_clase.gte(3)).And(iiss_clase.gte(3))
     emergencia = spi_img.gte(4).And(vci_clase.gte(4)).And(iiss_clase.eq(4))
+    
+    # Usamos iiss_clase como base topológica para evitar perder escala
+    base = iiss_clase.multiply(0)
     return (
-        ee.Image(0)
+        base
         .where(vigilancia, 1)
         .where(prealerta, 2)
         .where(alerta, 3)
@@ -596,11 +604,11 @@ with tab1:
     st.write(f"**Periodo SPI-3:** {fecha_ini} a {fecha_fin}")
     st.write(f"**Mes de referencia VCI:** {'Sin datos' if anio_vci is None else f'{anio_vci}-{mes_vci:02d}'}")
 
-    if nivel_spi >= 4 and nivel_vci >= 4:
+    if nivel_spi >= 4 or nivel_vci >= 4:
         st.error("EMERGENCIA: activar respuesta prioritaria en zonas IISS Muy Alta.")
-    elif nivel_spi >= 3 and nivel_vci >= 3:
+    elif nivel_spi >= 3 or nivel_vci >= 3:
         st.warning("ALERTA: activar medidas de mitigación en zonas IISS Alta y Muy Alta.")
-    elif nivel_spi >= 2 and nivel_vci >= 2:
+    elif nivel_spi >= 2 or nivel_vci >= 2:
         st.warning("PREALERTA: iniciar monitoreo quincenal y comunicación preventiva.")
     elif nivel_spi >= 1 or nivel_vci >= 1:
         st.info("VIGILANCIA: mantener monitoreo mensual y revisar pronóstico climático.")
@@ -609,9 +617,10 @@ with tab1:
 
 with tab2:
     st.subheader("Mapa integrado de alerta")
-    vis_alerta = {"min": 0, "max": 4, "palette": [COLORES_ALERTA[i] for i in range(5)]}
-    vis_iiss = {"min": 0, "max": 1, "palette": ["#ffffcc", "#fed976", "#fd8d3c", "#fc4e2a", "#bd0026", "#800026"]}
-    vis_vci = {"min": 0, "max": 100, "palette": ["red", "yellow", "green"]}
+   # Reemplazar los valores para quitar el "#"
+    vis_alerta = {"min": 0, "max": 4, "palette": [COLORES_ALERTA[i].replace("#", "") for i in range(5)]}
+    vis_iiss = {"min": 0, "max": 1, "palette": ["ffffcc", "fed976", "fd8d3c", "fc4e2a", "bd0026", "800026"]}
+    vis_vci = {"min": 0, "max": 100, "palette": ["red", "yellow", "green"]} # Los nombres CSS no dan problema
 
     centro = obtener_centro_mapa(geom)
     mapa = folium.Map(location=centro, zoom_start=13, control_scale=True, tiles=None)
