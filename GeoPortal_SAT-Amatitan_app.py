@@ -428,7 +428,7 @@ def clasificar_iiss(iiss, geom):
 
 
 def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
-    """Integra SPI-3, VCI e IISS conservando proyección y formato entero sin clip interno."""
+    """Integra SPI-3, VCI e IISS asegurando tipado, proyección y máscara limpia para GEE."""
     
     # 1. Usar iiss_clase como base topológica para asegurar la escala correcta
     base = iiss_clase.multiply(0).toByte()
@@ -445,7 +445,7 @@ def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
     alerta = amenaza.gte(3).And(iiss_clase.gte(3))
     emergencia = amenaza.gte(4).And(iiss_clase.eq(4))
     
-    # 5. Generar la imagen resultante y forzar la proyección métrica (sin .clip())
+    # 5. Generar la imagen rasterizada base
     alerta_img = (
         base
         .where(vigilancia, 1)
@@ -456,9 +456,14 @@ def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
         .rename("Alerta_Sequia")
     )
     
-    # GARANTÍA DE PROYECCIÓN: Forzamos la escala de MODIS (250m) en UTM 16N limpiamente
-    return alerta_img.reproject(crs=CRS_METRICO, scale=ESCALA_MODIS)
-
+    # 6. GARANTÍA DE RENDERIZADO: Forzar proyección métrica, enmascarar valores vacíos y recortar a la geometría
+    return (
+        alerta_img
+        .reproject(crs=CRS_METRICO, scale=ESCALA_MODIS)
+        .updateMask(alerta_img.gte(0))
+        .clip(geom)
+    )
+    
 def area_por_clase(imagen_clase, geom, escala: int = ESCALA_MODIS):
     """Calcula área por clase en hectáreas."""
     area_img = ee.Image.pixelArea().addBands(imagen_clase)
