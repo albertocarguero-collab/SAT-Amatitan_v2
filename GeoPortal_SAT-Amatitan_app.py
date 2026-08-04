@@ -499,7 +499,7 @@ def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
     """Agrega una imagen Earth Engine como TileLayer de Folium aplicando visualización segura."""
     img_render = ee.Image(ee_image)
     
-    # Aplicar visualización basada directamente en los parámetros de entrada sin llamadas sincrónicas de red
+    # Si se pasan parámetros de paleta, aplicamos visualize y llamamos a getMapId sin argumentos
     if "palette" in vis_params:
         img_render = img_render.visualize(**vis_params)
         map_id = img_render.getMapId()
@@ -514,7 +514,6 @@ def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
         control=True,
         opacity=opacity,
     ).add_to(mapa)
-
 
 def featurecollection_a_imagen(fc, color_value=1, width=2):
     """Convierte un FeatureCollection a imagen de líneas."""
