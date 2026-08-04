@@ -419,18 +419,17 @@ def clasificar_iiss(iiss, geom):
     3 Alta
     4 Muy Alta
     """
-
-    iiss_clase = (**       ee.Image.constant(0)
-     ** .where(iiss.gt(0).And(iiss.lte(0**0)), 1)
-        .where(iiss.gt(0.**).And(iiss.lte(0.60)), 2)
-       **where(iiss.gt(0.60).And(iiss.lte(**80)), 3)
-        .where(iiss.gt(0**0), 4)
+    iiss_clase = (
+        ee.Image.constant(0)
+        .where(iiss.gt(0).And(iiss.lte(0.30)), 1)
+        .where(iiss.gt(0.30).And(iiss.lte(0.60)), 2)
+        .where(iiss.gt(0.60).And(iiss.lte(0.80)), 3)
+        .where(iiss.gt(0.80), 4)
         .toByte()
-        **ename("IISS_clase")
+        .rename("IISS_clase")
         .clip(geom)
     )
-
-    return iiss_clase**
+    return iiss_clase
     
 def area_por_clase(imagen_clase, geom, escala: int = ESCALA_MODIS):
     """Calcula área por clase en hectáreas."""
