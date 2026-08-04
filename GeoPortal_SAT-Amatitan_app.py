@@ -652,7 +652,9 @@ with tab2:
     folium.TileLayer("OpenStreetMap", name="OpenStreetMap", overlay=False, control=True).add_to(mapa)
 
     if mostrar_alerta:
-        agregar_capa_ee(mapa, alerta_integrada, vis_alerta, "Alerta integrada", opacity=0.75)
+        # Pre-renderizamos la imagen a RGB en el servidor para evitar que la API de nubes colapse
+        alerta_rgb = alerta_integrada.visualize(**vis_alerta)
+        agregar_capa_ee(mapa, alerta_rgb, {}, "Alerta integrada", opacity=0.75)
 
     if mostrar_iiss:
         agregar_capa_ee(mapa, iiss, vis_iiss, "IISS", opacity=0.60)
