@@ -428,7 +428,7 @@ def clasificar_iiss(iiss, geom):
 
 
 def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
-    """Integra SPI-3, VCI e IISS asegurando tipado, proyección y máscara limpia para GEE."""
+    """Integra SPI-3, VCI e IISS asegurando tipado, proyección y rasterización limpia para GEE."""
     
     # 1. Usar iiss_clase como base topológica para asegurar la escala correcta
     base = iiss_clase.multiply(0).toByte()
@@ -456,12 +456,13 @@ def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
         .rename("Alerta_Sequia")
     )
     
-    # 6. GARANTÍA DE RENDERIZADO: Forzar proyección métrica, enmascarar valores vacíos y recortar a la geometría
+    # 6. GARANTÍA DE RENDERIZADO WEB: Forzar proyección, recortar y estampar visualización previa
+    # Esto aplana el árbol computacional y previene el error EEException en getMapId()
     return (
         alerta_img
         .reproject(crs=CRS_METRICO, scale=ESCALA_MODIS)
-        .updateMask(alerta_img.gte(0))
         .clip(geom)
+        .visualize(min=0, max=4, palette=[COLORES_ALERTA[i].replace("#", "") for i in range(5)])
     )
     
 def area_por_clase(imagen_clase, geom, escala: int = ESCALA_MODIS):
