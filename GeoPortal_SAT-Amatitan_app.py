@@ -428,33 +428,36 @@ def clasificar_iiss(iiss, geom):
 
 
 def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
-    """Integra SPI-3, VCI e IISS conservando proyección y lógica de UI."""
+    """Integra SPI-3, VCI e IISS conservando proyección y formato entero."""
     
-    # 1. Usar iiss_clase como base topológica para no perder la escala de MODIS/DEM
-    base = iiss_clase.multiply(0)
+    # 1. Usar iiss_clase como base topológica para asegurar la escala correcta
+    base = iiss_clase.multiply(0).toByte()
     
-    # 2. Crear spi_img SUMANDO a la base. Así hereda automáticamente la proyección correcta
-    spi_img = base.add(nivel_spi).rename("SPI_clase")
+    # 2. Forzar spi_img como un entero explícito (Byte) heredando la base
+    spi_img = base.add(int(nivel_spi)).toByte().rename("SPI_clase")
     
-    # 3. Combinar amenaza (SPI y VCI) evaluando el peor escenario (máximo nivel)
-    # Esto hace que el mapa coincida con la lógica de tu interfaz
-    amenaza = spi_img.max(vci_clase)
+    # 3. Combinar amenaza (SPI y VCI) evaluando el nivel máximo
+    amenaza = spi_img.max(vci_clase).toByte()
     
-    # 4. Definir condiciones combinando la amenaza climática/vegetativa con la vulnerabilidad (IISS)
+    # 4. Definir condiciones lógicas con clases de tipo byte
     vigilancia = amenaza.gte(1)
     prealerta = amenaza.gte(2).And(iiss_clase.gte(3))
     alerta = amenaza.gte(3).And(iiss_clase.gte(3))
     emergencia = amenaza.gte(4).And(iiss_clase.eq(4))
     
-    return (
+    # 5. Generar la imagen resultante, fijar la proyección métrica y recortar
+    alerta_img = (
         base
         .where(vigilancia, 1)
         .where(prealerta, 2)
         .where(alerta, 3)
         .where(emergencia, 4)
+        .toByte()
         .rename("Alerta_Sequia")
-        .clip(geom)
     )
+    
+    # GARANTÍA DE PROYECCIÓN: Forzamos la escala de MODIS (250m) en UTM 16N
+    return alerta_img.reproject(crs=CRS_METRICO, scale=ESCALA_MODIS).clip(geom)
 
 
 def area_por_clase(imagen_clase, geom, escala: int = ESCALA_MODIS):
