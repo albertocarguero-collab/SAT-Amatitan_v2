@@ -499,14 +499,13 @@ def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
     """Agrega una imagen Earth Engine como TileLayer de Folium aplicando visualización segura."""
     img_render = ee.Image(ee_image)
     
-    # Si la imagen tiene una sola banda y se pasan parámetros de paleta, aplicamos visualize aquí
-    if "palette" in vis_params and img_render.bandNames().size().getInfo() == 1:
+    # Aplicar visualización basada directamente en los parámetros de entrada sin llamadas sincrónicas de red
+    if "palette" in vis_params:
         img_render = img_render.visualize(**vis_params)
-        # Una vez visualizada en RGB, llamamos a getMapId() sin argumentos adicionales de paleta
         map_id = img_render.getMapId()
     else:
         map_id = img_render.getMapId(vis_params)
-    
+        
     folium.raster_layers.TileLayer(
         tiles=map_id["tile_fetcher"].url_format,
         attr="Google Earth Engine",
