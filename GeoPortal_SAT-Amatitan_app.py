@@ -496,16 +496,12 @@ def obtener_centro_mapa(geom):
     return [coords[1], coords[0]]
 
 def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
-    """Agrega una imagen Earth Engine como TileLayer de Folium aplicando visualización segura."""
+    """Agrega una imagen Earth Engine como TileLayer de Folium utilizando vis_params nativo."""
     img_render = ee.Image(ee_image)
     
-    # Si se pasan parámetros de paleta, aplicamos visualize y llamamos a getMapId sin argumentos
-    if "palette" in vis_params:
-        img_render = img_render.visualize(**vis_params)
-        map_id = img_render.getMapId()
-    else:
-        map_id = img_render.getMapId(vis_params)
-        
+    # Solicitamos los teselos directamente aplicando los vis_params de forma nativa a la imagen
+    map_id = img_render.getMapId(vis_params)
+    
     folium.raster_layers.TileLayer(
         tiles=map_id["tile_fetcher"].url_format,
         attr="Google Earth Engine",
@@ -514,7 +510,6 @@ def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
         control=True,
         opacity=opacity,
     ).add_to(mapa)
-
 def featurecollection_a_imagen(fc, color_value=1, width=2):
     """Convierte un FeatureCollection a imagen de líneas."""
     return ee.Image().byte().paint(featureCollection=fc, color=color_value, width=width)
