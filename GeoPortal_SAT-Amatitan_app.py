@@ -428,26 +428,24 @@ def clasificar_iiss(iiss, geom):
 
 
 def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
-    """Integra SPI-3, VCI e IISS asegurando tipado, proyección y máscara limpia para GEE."""
-    
-    # 1. Usar iiss_clase como base topológica para asegurar la escala correcta
+    """Integra SPI-3, VCI e IISS asegurando tipado y máscara limpia para GEE."""
+    # 1. Usar iiss_clase como base topológica
     base = iiss_clase.multiply(0).toByte()
-    
+
     # 2. Forzar spi_img como un entero explícito (Byte) heredando la base
     spi_img = base.add(int(nivel_spi)).toByte().rename("SPI_clase")
-    
+
     # 3. Combinar amenaza (SPI y VCI) evaluando el nivel máximo
     amenaza = spi_img.max(vci_clase).toByte()
-    
+
     # 4. Definir condiciones lógicas con clases de tipo byte
     vigilancia = amenaza.gte(1)
     prealerta = amenaza.gte(2).And(iiss_clase.gte(3))
     alerta = amenaza.gte(3).And(iiss_clase.gte(3))
     emergencia = amenaza.gte(4).And(iiss_clase.eq(4))
-    
+
     # 5. Generar la imagen rasterizada base
-    alerta_img = (
-        base
+    alerta_img = (base
         .where(vigilancia, 1)
         .where(prealerta, 2)
         .where(alerta, 3)
@@ -455,11 +453,9 @@ def crear_alerta_integrada(nivel_spi: int, vci_clase, iiss_clase, geom):
         .toByte()
         .rename("Alerta_Sequia")
     )
-    
-    # 6. GARANTÍA DE PROYECCIÓN: Forzar escala métrica, enmascarar y recortar (sin .visualize())
-    return (
-        alerta_img
-        .reproject(crs=CRS_METRICO, scale=ESCALA_MODIS)
+
+    # 6. DEVOLVER SIN .reproject() para no romper la generación de teselos en Folium
+    return (alerta_img
         .updateMask(alerta_img.gte(0))
         .clip(geom)
     )
@@ -656,7 +652,7 @@ with tab2:
     folium.TileLayer("OpenStreetMap", name="OpenStreetMap", overlay=False, control=True).add_to(mapa)
 
     if mostrar_alerta:
-        agregar_capa_ee(mapa, alerta_integrada.toByte(), vis_alerta, "Alerta integrada", opacity=0.75)
+        agregar_capa_ee(mapa, alerta_integrada, vis_alerta, "Alerta integrada", opacity=0.75)
 
     if mostrar_iiss:
         agregar_capa_ee(mapa, iiss, vis_iiss, "IISS", opacity=0.60)
