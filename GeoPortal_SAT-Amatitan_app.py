@@ -412,17 +412,25 @@ def calcular_iiss(geom, pendiente):
 
 
 def clasificar_iiss(iiss, geom):
-    """Clasifica IISS en cuatro clases conservando proyección."""
-    base = iiss.multiply(0)
-    return (
-        base
-        .where(iiss.gt(0).And(iiss.lte(0.40)), 1)
-        .where(iiss.gt(0.40).And(iiss.lte(0.60)), 2)
-        .where(iiss.gt(0.60).And(iiss.lte(0.80)), 3)
-        .where(iiss.gt(0.80), 4)
-        .rename("IISS_clase")
+    """
+    Clasifica IISS en cuatro clases:
+    1 Baja
+    2 Moderada
+    3 Alta
+    4 Muy Alta
+    """
+
+    iiss_clase = (**       ee.Image.constant(0)
+     ** .where(iiss.gt(0).And(iiss.lte(0**0)), 1)
+        .where(iiss.gt(0.**).And(iiss.lte(0.60)), 2)
+       **where(iiss.gt(0.60).And(iiss.lte(**80)), 3)
+        .where(iiss.gt(0**0), 4)
+        .toByte()
+        **ename("IISS_clase")
         .clip(geom)
     )
+
+    return iiss_clase**
     
 def area_por_clase(imagen_clase, geom, escala: int = ESCALA_MODIS):
     """Calcula área por clase en hectáreas."""
@@ -456,20 +464,41 @@ def obtener_centro_mapa(geom):
     return [coords[1], coords[0]]
 
 def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
-    """Agrega una imagen Earth Engine como TileLayer de Folium de forma segura usando getMapId."""
-    img_render = ee.Image(ee_image)
-    
-    # Pasamos los parámetros de visualización directamente a getMapId utilizando la proyección web estándar
-    map_id = img_render.getMapId(vis_params)
-    
-    folium.raster_layers.TileLayer(
-        tiles=map_id["tile_fetcher"].url_format,
-        attr="Google Earth Engine",
-        name=nombre,
-        overlay=True,
-        control=True,
-        opacity=opacity,
-    ).add_to(mapa)
+    """
+    Agrega una imagen Earth Engine como TileLayer de Folium.
+
+    Versión robusta:
+    - Convierte la imagen a ee.Image.
+    - Aplica visualize() en el servidor de Earth Engine.
+    - Convierte el resultado a una imagen RGB compatible con teselas web.
+    - Evita errores frecuentes con imágenes categóricas generadas con where().
+    """
+
+    try:
+        img_render = ee.Image(ee_image)
+
+        # Aplicar visualización en el servidor.
+        # Esto convierte la imagen a una imagen RGB renderizable.
+        if vis_params is not None:
+            img_render = img_render.visualize(**vis_params)
+
+        # getMapId s**llama sobre la imagen ya visualiz**a.
+        map_id = img_render.ge**apId()
+
+        folium.raster_lay**s.TileLayer(
+            tiles=ma**id["tile_fetcher"].url_format,
+  **        attr="Google Earth Engine**
+            name=nombre,
+       **   overlay=True,
+            cont**l=True,
+            opacity=opaci**,
+        ).add_to(mapa)
+
+       **eturn True
+
+    except Exception ** exc:
+        st.warning(f"No se **do cargar la capa '{nombre}' en e**mapa.")
+        st.code(str(exc))**       return False
     
 def featurecollection_a_imagen(fc, color_value=1, width=2):
     """Convierte un FeatureCollection a imagen de líneas."""
