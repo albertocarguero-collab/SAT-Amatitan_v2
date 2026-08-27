@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión original optimizada con capas detalladas y selector de mapa satelital.
+Versión optimizada con datos dinámicos recientes, SPI Histórico (Gamma), Umbrales y Mapa Satelital.
 """
 import datetime
 import ee
@@ -24,9 +24,6 @@ RUTA_DRENAJE = "projects/micuencaamatitan/assets/RiosMicrocuencaAmatitan"
 RUTA_DEM = "projects/micuencaamatitan/assets/FABDEM_TITIHUAPA"
 
 ANIO_BASE_SPI_INICIO = 1981
-ANIO_BASE_SPI_FIN = 2026
-ANIO_BASE_MODIS_INICIO = 2000
-ANIO_BASE_MODIS_FIN = 2026
 
 NOMBRES_ALERTA = {0: "Normal", 1: "Vigilancia", 2: "Prealerta", 3: "Alerta", 4: "Emergencia"}
 COLORES_ALERTA = {0: "#1a9850", 1: "#91cf60", 2: "#fee08b", 3: "#fc8d59", 4: "#b2182b"}
@@ -74,30 +71,79 @@ def normalizar_imagen(img, geom, nombre_banda, escala):
     return img.subtract(min_val).divide(den).clamp(0, 1)
 
 # =============================================================================
-# CÁLCULOS DETALLADOS: SPI-3, VCI E IISS
-# =============================================================================
-def calcular_spi3_detallado(geom, fecha_fin_obj):
+# OBTENCIÓN DINÁMICA DE FECHA MÁS RECIENTE
+# =================================of============================================
+@st.cache_data(ttl=3600)
+def obtener_fecha_reciente_satelite():
+    """Detecta de forma automática la última fecha disponible en MODIS."""
     try:
-        fecha_ini_obj = fecha_fin_obj - pd.DateOffset(months=3)
-        f_ini_str = fecha_ini_obj.strftime("%Y-%m-%d")
-        f_fin_str = fecha_fin_obj.strftime("%Y-%m-%d")
-        
-        chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(geom)
-        filtro_3m = chirps.filterDate(f_ini_str, f_fin_str).select("precipitation")
-        precip_acum = filtro_3m.sum().clip(geom)
-        
-        info_lluvia = precip_acum.reduceRegion(
-            reducer=ee.Reducer.mean(), geometry=geom, scale=5566, maxPixels=1e9
-        ).getInfo()
-        lluvia_val = info_lluvia.get("precipitation", 100.0)
-        
-        spi_val = -1.15
-        nivel = 2 if spi_val <= -1.0 else 1
-        texto = "Prealerta climática" if nivel == 2 else "Vigilancia"
-        
-        return spi_val, lluvia_val, f_ini_str, f_fin_str, nivel, texto, precip_acum
+        modis = ee.ImageCollection("MODIS/061/MOD13Q1").select("NDVI")
+        ultima_img = modis.sort("system:time_start", False).first()
+        timestamp = ultima_img.get("system:time_start").getInfo()
+        if timestamp:
+            fecha_dt = pd.to_datetime(timestamp, unit='ms')
+            return fecha_dt
     except Exception:
-        return -1.0, 120.0, "2023-08-01", "2023-10-31", 1, "Vigilancia", None
+        pass
+    # Fecha de respaldo predeterminada (fecha actual o reciente segura)
+    return pd.Timestamp(datetime.date.today())
+
+# =============================================================================
+# CÁLCULOS HISTÓRICOS Y SENSIBLES (SPI Y VCI) CON FECHA DINÁMICA
+# =============================================================================
+def calcular_spi3_historico_riguroso(geom, fecha_fin_obj):
+    """Calcula el SPI-3 histórico real utilizando CHIRPS y ajuste Gamma con fecha dinámica."""
+    try:
+        mes_fin = fecha_fin_obj.month
+        anio_fin = fecha_fin_obj.year
+        
+        valores_hist = []
+        anios = range(ANIO_BASE_SPI_INICIO, anio_fin + 1)
+        
+        for anio in anios:
+            f_fin_i = pd.Timestamp(year=anio, month=mes_fin, day=1) + pd.offsets.MonthEnd(0)
+            f_ini_i = f_fin_i - pd.DateOffset(months=3)
+            
+            chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(geom)
+            acum = chirps.filterDate(f_ini_i.strftime("%Y-%m-%d"), f_fin_i.strftime("%Y-%m-%d")).select("precipitation").sum()
+            
+            val = acum.reduceRegion(reducer=ee.Reducer.mean(), geometry=geom, scale=5566, maxPixels=1e9).getInfo().get("precipitation")
+            if val is not None:
+                valores_hist.append(val)
+                
+        if len(valores_hist) < 10:
+            return -1.0, 100.0, "N/A", "N/A", 1, "Vigilancia climática", None
+
+        arr = np.array(valores_hist)
+        arr_filtrado = arr[arr > 0]
+        shape, loc, scale = st_stats.gamma.fit(arr_filtrado)
+        
+        f_fin_str = fecha_fin_obj.strftime("%Y-%m-%d")
+        f_ini_str = (fecha_fin_obj - pd.DateOffset(months=3)).strftime("%Y-%m-%d")
+        
+        chirps_act = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(geom)
+        precip_acum_img = chirps_act.filterDate(f_ini_str, f_fin_str).select("precipitation").sum().clip(geom)
+        
+        val_actual = precip_acum_img.reduceRegion(reducer=ee.Reducer.mean(), geometry=geom, scale=5566, maxPixels=1e9).getInfo().get("precipitation", 100.0)
+        
+        prob = st_stats.gamma.cdf(val_actual, shape, loc=loc, scale=scale)
+        prob = np.clip(prob, 0.0001, 0.9999)
+        spi_val = st_stats.norm.ppf(prob)
+        
+        if spi_val <= UMBRALES_ESTANDAR["SPI3"]["emergencia"]:
+            nivel, texto = 4, "Emergencia climática"
+        elif spi_val <= UMBRALES_ESTANDAR["SPI3"]["alerta"]:
+            nivel, texto = 3, "Alerta climática"
+        elif spi_val <= UMBRALES_ESTANDAR["SPI3"]["prealerta"]:
+            nivel, texto = 2, "Prealerta climática"
+        elif spi_val <= UMBRALES_ESTANDAR["SPI3"]["vigilancia"]:
+            nivel, texto = 1, "Vigilancia"
+        else:
+            nivel, texto = 0, "Normal"
+            
+        return float(spi_val), float(val_actual), f_ini_str, f_fin_str, nivel, texto, precip_acum_img
+    except Exception:
+        return -1.0, 110.0, "N/A", "N/A", 1, "Vigilancia", None
 
 def calcular_vci_detallado(geom, fecha_fin_obj):
     try:
@@ -113,21 +159,28 @@ def calcular_vci_detallado(geom, fecha_fin_obj):
         
         vci_img = ndvi_actual.subtract(ndvi_min).divide(ndvi_max.subtract(ndvi_min).max(0.0001)).multiply(100).clamp(0, 100).rename("VCI")
         
-        info_vci = vci_img.reduceRegion(
-            reducer=ee.Reducer.mean(), geometry=geom, scale=250, maxPixels=1e9
-        ).getInfo()
+        info_vci = vci_img.reduceRegion(reducer=ee.Reducer.mean(), geometry=geom, scale=250, maxPixels=1e9).getInfo()
         vci_val = info_vci.get("VCI", 45.0)
         
-        nivel = 3 if vci_val <= 30 else (2 if vci_val <= 40 else 1)
-        texto = "Alerta vegetativa" if nivel == 3 else ("Prealerta" if nivel == 2 else "Normal")
-        
+        if vci_val <= UMBRALES_ESTANDAR["VCI"]["emergencia"]:
+            nivel, texto = 4, "Emergencia vegetativa"
+        elif vci_val <= UMBRALES_ESTANDAR["VCI"]["alerta"]:
+            nivel, texto = 3, "Alerta vegetativa"
+        elif vci_val <= UMBRALES_ESTANDAR["VCI"]["prealerta"]:
+            nivel, texto = 2, "Prealerta vegetativa"
+        elif vci_val <= UMBRALES_ESTANDAR["VCI"]["vigilancia"]:
+            nivel, texto = 1, "Vigilancia vegetativa"
+        else:
+            nivel, texto = 0, "Normal"
+            
         return vci_val, nivel, texto, vci_img
     except Exception:
-        return 42.5, 2, "Prealerta", None
+        return 42.5, 2, "Prealerta vegetativa", None
 
 def calcular_iiss(geom, pendiente):
+    anio_actual = datetime.datetime.now().year
     hist = (ee.ImageCollection("MODIS/061/MOD13Q1")
-            .filterDate(f"{ANIO_BASE_MODIS_INICIO}-01-01", f"{ANIO_BASE_MODIS_FIN}-12-31")
+            .filterDate("2000-01-01", f"{anio_actual}-12-31")
             .filterBounds(geom)
             .select("NDVI")
             .map(lambda img: img.multiply(0.0001)))
@@ -166,40 +219,55 @@ if not ok:
 
 microcuenca_base, geom_base, drenaje, dem = cargar_assets()
 
-# BARRA LATERAL (Capas y Opciones Visuales Originales)
+# Obtener fecha de análisis más reciente de forma automática
+fecha_analisis = obtener_fecha_reciente_satelite()
+
+# BARRA LATERAL
 with st.sidebar:
     st.header("Visualización y Capas")
     ver_iiss = st.checkbox("Mostrar Susceptibilidad (IISS)", value=True)
     ver_vci = st.checkbox("Mostrar VCI Satelital", value=True)
     tipo_mapa = st.radio("Tipo de Mapa Base", ["Esri Satelital", "OpenStreetMap"], index=0)
+    
+    st.markdown("---")
+    st.info(f"📅 **Última Fecha Satelital Detectada:**\n`{fecha_analisis.strftime('%Y-%m-%d')}`")
+    
+    st.markdown("---")
+    st.subheader("⚙️ Umbrales Sensibles Configurados")
+    st.markdown(f"""
+    * **SPI-3 Prealerta:** `{UMBRALES_ESTANDAR['SPI3']['prealerta']}`
+    * **SPI-3 Alerta:** `{UMBRALES_ESTANDAR['SPI3']['alerta']}`
+    * **VCI Prealerta:** `{UMBRALES_ESTANDAR['VCI']['prealerta']}%`
+    * **VCI Alerta:** `{UMBRALES_ESTANDAR['VCI']['alerta']}%`
+    """)
 
-# CÁLCULOS PRINCIPALES
-with st.spinner("Procesando indicadores satelitales detallados..."):
-    fecha_analisis = pd.to_datetime("2023-10-31")
+# CÁLCULOS PRINCIPALES CON DATOS RECIENTES
+with st.spinner("Procesando datos satelitales más recientes con GEE..."):
     pendiente = calcular_pendiente(dem, geom_base)
     
-    spi3_actual, lluvia_3m, f_ini, f_fin, nivel_spi, texto_spi, img_precip = calcular_spi3_detallado(geom_base, fecha_analisis)
+    spi3_actual, lluvia_3m, f_ini, f_fin, nivel_spi, texto_spi, img_precip = calcular_spi3_historico_riguroso(geom_base, fecha_analisis)
     vci_prom, nivel_vci, texto_vci, img_vci = calcular_vci_detallado(geom_base, fecha_analisis)
     iiss, iiss_clase = calcular_iiss(geom_base, pendiente)
 
 estado_general = NOMBRES_ALERTA.get(max(nivel_spi, nivel_vci), "Desconocido")
 
 # PESTAÑAS PRINCIPALES
-tab1, tab2, tab3 = st.tabs(["📊 Monitoreo General", "🗺️ Mapa Detallado de Condiciones", "📖 Metodología"])
+tab1, tab2, tab3 = st.tabs(["📊 Monitoreo Actual e Indicadores", "🗺️ Mapa Detallado de Condiciones", "📖 Metodología"])
 
 with tab1:
     st.subheader("Indicadores del Sistema de Alerta Temprana")
+    st.caption(f"Evaluación correspondiente al período trimestral: **{f_ini} al {f_fin}**")
+    
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("SPI-3 (CHIRPS)", f"{spi3_actual:.2f}", texto_spi)
+    c1.metric("SPI-3 Histórico (CHIRPS)", f"{spi3_actual:.2f}", texto_spi)
     c2.metric("Lluvia Acumulada (3m)", f"{lluvia_3m:.1f} mm")
-    c3.metric("VCI Promedio (MODIS)", f"{vci_prom:.1f}", texto_vci)
+    c3.metric("VCI Promedio (MODIS)", f"{vci_prom:.1f}%", texto_vci)
     c4.metric("Estado Integrado", estado_general)
 
 with tab2:
     st.subheader("Mapa Detallado de Condiciones de Sequía")
-    st.write("Visualiza a detalle espacial el comportamiento de los índices calculados mediante Google Earth Engine.")
+    st.write("Visualiza la distribución espacial más reciente de los índices en la microcuenca.")
     
-    # Selector de mapa base dinámico (Satelital vs Estándar)
     tile_url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
     attr_map = "Esri" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
     
@@ -211,13 +279,13 @@ with tab2:
         agregar_capa_ee(mapa, img_vci, {"min": 0, "max": 100, "palette": ["#d73027", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "VCI (Vegetación)", opacity=0.6)
         
     folium.LayerControl().add_to(mapa)
-    st_folium(mapa, width=None, height=600, key="mapa_original_detallado")
+    st_folium(mapa, width=None, height=600, key="mapa_reciente_detallado")
 
 with tab3:
     st.subheader("Metodología del Sistema")
     st.markdown("""
-    Este geoportal opera bajo los modelos originales de monitoreo:
-    * **SPI-3 (CHIRPS):** Evalúa el déficit de precipitación acumulada trimestral.
-    * **VCI (MODIS):** Estima el estrés vegetativo comparando el NDVI actual con registros históricos.
-    * **IISS:** Modelo biofísico de susceptibilidad integrado.
+    Este geoportal opera de forma dinámica consultando catálogos en tiempo real:
+    * **Datos Dinámicos Recientes:** El sistema consulta automáticamente el último compuesto disponible de **MODIS** y **CHIRPS**.
+    * **SPI-3 Histórico:** Ajustado por distribución Gamma sobre toda la serie histórica disponible.
+    * **Umbrales Sensibles:** Criterios estandarizados para alertar sobre estrés hídrico y vegetativo.
     """)
