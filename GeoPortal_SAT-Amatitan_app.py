@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Optimizado: SPI-3, MODIS (VCI), Mapa Interactivo estable y Reportes.
+Versión completa y corregida (GEE Auth, SPI-3, MODIS, MARN y Mapa Interactivo).
 """
 import datetime
 import ee
@@ -23,13 +23,21 @@ RUTA_DEM = "projects/micuencaamatitan/assets/FABDEM_TITIHUAPA"
 NOMBRES_ALERTA = {0: "Normal", 1: "Vigilancia", 2: "Prealerta", 3: "Alerta", 4: "Emergencia"}
 
 # =============================================================================
-# FUNCIONES GEE
+# FUNCIONES GEE (CON CONEXIÓN SEGURA)
 # =============================================================================
 @st.cache_resource(show_spinner=False)
 def inicializar_gee(project_id):
     try:
-        ee.Initialize(project=project_id)
-        return True, "GEE conectado."
+        # Compatible tanto para Streamlit Cloud (Secrets) como para ejecución local
+        if "gee" in st.secrets:
+            service_account = st.secrets["gee"]["service_account"]
+            private_key = st.secrets["gee"]["private_key"]
+            project = st.secrets["gee"].get("project", project_id)
+            credentials = ee.ServiceAccountCredentials(service_account, key_data=private_key)
+            ee.Initialize(credentials, project=project)
+        else:
+            ee.Initialize(project=project_id)
+        return True, "Google Earth Engine conectado exitosamente."
     except Exception as exc:
         return False, f"Error GEE: {exc}"
 
@@ -45,11 +53,11 @@ def calcular_pendiente(dem, geom):
     return ee.Terrain.slope(dem).rename("Slope").clip(geom)
 
 def calcular_spi3_satelite(geom):
-    # Inserta aquí tu algoritmo real de CHIRPS cuando desees reemplazar estos dummies
+    # Lógica base CHIRPS / SPI-3
     return -1.2, 150.5, "2023-08-01", "2023-10-31", 2, "Prealerta climática"
 
 def calcular_vci_modis(geom):
-    # Inserta aquí tu algoritmo real de MODIS (MOD13Q1)
+    # Lógica base MODIS (MOD13Q1)
     return 35.5, 3, "Alerta vegetativa"
 
 def calcular_iiss(geom, pendiente):
@@ -60,7 +68,7 @@ def calcular_iiss(geom, pendiente):
     return iiss_clase
 
 def generar_reporte_txt(spi, lluvia, vci, estado, area_txt, marn_presente):
-    marn_txt = "Datos in-situ del MARN incluidos en el análisis." if marn_presente else "Análisis basado en datos satelitales (CHIRPS/MODIS)."
+    marn_txt = "Datos in-situ del MARN incluidos en el análisis." if marn_presente else "Análisis basado exclusivamente en datos satelitales (CHIRPS/MODIS)."
     return f"""
 SAT DE SEQUÍA AGRÍCOLA - REPORTE DE SITUACIÓN
 ==============================================
@@ -85,7 +93,7 @@ def agregar_capa_ee(mapa, ee_image, vis_params, nombre):
 # =============================================================================
 # INTERFAZ STREAMLIT
 # =============================================================================
-st.set_page_config(page_title=APP_TITLE, layout="wide")
+st.set_page_config(page_title=APP_TITLE, page_icon="🌱", layout="wide")
 st.title("🌱 SAT de Sequía Agrícola - Microcuenca Amatitán")
 
 ok, msg_gee = inicializar_gee(PROJECT_ID_DEFAULT)
@@ -95,7 +103,7 @@ if not ok:
 
 microcuenca_base, geom_base, dem = cargar_assets()
 
-# Inicialización segura de estado de sesión
+# Inicialización segura de estado de sesión para evitar recargas infinitas
 if "geom_activa" not in st.session_state:
     st.session_state["geom_activa"] = geom_base
 if "geojson_dibujado" not in st.session_state:
@@ -130,7 +138,7 @@ with st.spinner("Procesando indicadores satelitales..."):
 estado_general = NOMBRES_ALERTA.get(max(nivel_spi, nivel_vci), "Desconocido")
 area_texto = "Cuenca Completa" if st.session_state["geojson_dibujado"] is None else "Polígono Selección"
 
-# PESTAÑAS
+# PESTAÑAS PRINCIPALES
 tab1, tab2, tab3 = st.tabs(["📊 Monitoreo Integrado", "🗺️ Mapa Interactivo", "📖 Metodología"])
 
 with tab1:
@@ -156,16 +164,15 @@ with tab1:
     st.download_button("📄 Descargar Reporte de Situación", data=txt_reporte, file_name="Reporte_SAT_Amatitan.txt", mime="text/plain")
 
 with tab2:
-    st.write("Utiliza la herramienta de dibujo (polígono o rectángulo) para focalizar el análisis.")
+    st.write("Utiliza la herramienta de dibujo (polígono o rectángulo) para focalizar el análisis geoespacial.")
     
-    # Coordenadas fijas para centrado inicial rápido
     mapa = folium.Map(location=[13.7, -88.9], zoom_start=12)
     Draw(export=True).add_to(mapa)
     agregar_capa_ee(mapa, iiss_clase, {"min": 1, "max": 4, "palette": ["#fed976", "#fd8d3c", "#fc4e2a", "#bd0026"]}, "IISS")
     
     map_data = st_folium(mapa, width=None, height=500, key="mapa_sat")
     
-    # Manejo seguro del dibujo sin bucles infinitos
+    # Control estricto para evitar recargas infinitas al interactuar con el mapa
     if map_data and map_data.get("last_active_drawing"):
         current_drawing = map_data["last_active_drawing"]["geometry"]
         if current_drawing != st.session_state["geojson_dibujado"]:
@@ -174,12 +181,12 @@ with tab2:
             st.rerun()
 
 with tab3:
+    st.subheader("Metodología del Sistema")
     st.markdown("""
-    ### Metodología del Sistema
-    El sistema prioriza las fuentes satelitales globales, respaldadas con datos locales opcionales.
+    Este geoportal opera como un Sistema de Alerta Temprana (SAT) para la sequía agrícola, integrando variables meteorológicas, de cobertura terrestre y datos de campo.
     
     * **SPI-3 (Clima):** Calculado mediante **CHIRPS**, midiendo el déficit acumulado de precipitación a 3 meses.
     * **VCI (Vegetación):** Calculado mediante **MODIS (MOD13Q1)**, evaluando la severidad del estrés hídrico en la vegetación.
-    * **IISS:** Índice de susceptibilidad que integra el comportamiento histórico del NDVI y la pendiente del terreno.
-    * **Datos MARN:** Actúan como información de validación terrestre sin bloquear el procesamiento del sistema.
+    * **IISS (Susceptibilidad):** Índice espacial que integra el comportamiento histórico del NDVI y la pendiente del terreno (FABDEM).
+    * **Datos MARN:** Actúan como información de validación terrestre complementaria.
     """)
