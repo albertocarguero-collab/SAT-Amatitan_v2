@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión completa: Gráfico de SPI Histórico coloreado por años secos/húmedos, áreas en hectáreas, VCI, IISS y Mapa Satelital.
+Versión completa: Gráfico Altair SPI-3 (rojo para secos), áreas en hectáreas y capas de condición en el mapa.
 """
 import datetime
+import altair as alt
 import ee
 import folium
 from folium.plugins import Draw
@@ -86,7 +87,7 @@ def obtener_fecha_reciente_satelite():
     return pd.Timestamp(datetime.date.today())
 
 def calcular_serie_historica_spi3(geom, anio_fin):
-    """Genera la serie temporal histórica clasificando años secos y no secos."""
+    """Genera la serie histórica y asigna la categoría de color para Altair."""
     anios = range(ANIO_BASE_SPI_INICIO, anio_fin + 1)
     datos_serie = []
     
@@ -95,20 +96,24 @@ def calcular_serie_historica_spi3(geom, anio_fin):
     
     for i, anio in enumerate(anios):
         val = float(valores_base[i])
-        # Clasificación para diferenciar en gráficos
         if val <= -1.5:
-            condicion = "Año Seco Severo/Extremo"
+            condicion = "Seco Severo / Alerta"
+            color_bar = "#b2182b" # Rojo oscuro
         elif val <= -1.0:
-            condicion = "Año Seco Moderado"
+            condicion = "Seco Moderado / Prealerta"
+            color_bar = "#fc8d59" # Naranja
         elif val <= -0.5:
-            condicion = "Año Seco Leve"
+            condicion = "Seco Leve / Vigilancia"
+            color_bar = "#fee08b" # Amarillo
         else:
-            condicion = "Año Normal / Húmedo"
+            condicion = "Normal / Húmedo"
+            color_bar = "#1a9850" # Verde
             
         datos_serie.append({
-            "Año": anio,
+            "Año": int(anio),
             "SPI-3": round(val, 2),
-            "Condición Climática": condicion
+            "Condición": condicion,
+            "Color": color_bar
         })
     return pd.DataFrame(datos_serie)
 
@@ -272,15 +277,17 @@ if not ok:
 microcuenca_base, geom_base, drenaje, dem = cargar_assets()
 fecha_analisis = obtener_fecha_reciente_satelite()
 
-# BARRA LATERAL
+# BARRA LATERAL CON CONTROLES DE CAPAS
 with st.sidebar:
-    st.header("Visualización y Capas")
+    st.header("🎛️ Control de Capas y Mapas")
     ver_iiss = st.checkbox("Mostrar Susceptibilidad (IISS)", value=True)
-    ver_vci = st.checkbox("Mostrar VCI Satelital", value=True)
+    ver_vci = st.checkbox("Mostrar VCI (Condición Vegetativa)", value=True)
+    ver_precip = st.checkbox("Mostrar Precipitación Acumulada (3m)", value=False)
+    
     tipo_mapa = st.radio("Tipo de Mapa Base", ["Esri Satelital", "OpenStreetMap"], index=0)
     
     st.markdown("---")
-    st.info(f"📅 **Última Fecha Satelital Detectada:**\n`{fecha_analisis.strftime('%Y-%m-%d')}`")
+    st.info(f"📅 **Última Fecha Satelital:**\n`{fecha_analisis.strftime('%Y-%m-%d')}`")
 
 # CÁLCULOS PRINCIPALES
 with st.spinner("Procesando modelos geoespaciales y estadísticas..."):
@@ -311,10 +318,20 @@ with tab1:
     col_g1, col_g2 = st.columns(2)
     
     with col_g1:
-        st.subheader("📈 Evolución Histórica SPI-3 (Años Secos y Húmedos)")
-        # Gráfico diferenciando por condición climática
-        st.bar_chart(df_serie_spi.set_index("Año")[["SPI-3"]])
-        st.caption("Visualización de los índices históricos estandarizados destacando umbrales de sequía.")
+        st.subheader("📈 Evolución Histórica SPI-3 (Años Secos en Rojo)")
+        # Gráfico dinámico en Altair que pinta automáticamente en rojo/naranja los periodos secos
+        chart_spi = alt.Chart(df_serie_spi).mark_bar().encode(
+            x=alt.X('Año:O', title='Año'),
+            y=alt.Y('SPI-3:Q', title='Índice SPI-3'),
+            color=alt.Color('Condición:N', scale=alt.Scale(
+                domain=['Seco Severo / Alerta', 'Seco Moderado / Prealerta', 'Seco Leve / Vigilancia', 'Normal / Húmedo'],
+                range=['#b2182b', '#fc8d59', '#fee08b', '#1a9850']
+            ), legend=alt.Legend(title="Condición Climática")),
+            tooltip=['Año', 'SPI-3', 'Condición']
+        ).properties(height=350)
+        
+        st.altair_chart(chart_spi, use_container_width=True)
+        st.caption("Visualización temporal destacando en tonos rojos y naranjas los periodos de sequía registrados.")
         
     with col_g2:
         st.subheader("📊 Distribución de Áreas por Condición")
@@ -322,8 +339,8 @@ with tab1:
         st.caption("Superficie estimada en hectáreas por cada nivel de condición o alerta establecida.")
 
 with tab2:
-    st.subheader("Mapa Detallado de Condiciones de Sequía")
-    st.write("Visualiza la distribución espacial de los índices y su zonificación en el territorio.")
+    st.subheader("🗺️ Mapa Detallado de Condiciones de Sequía y Humedad")
+    st.write("Explora las capas espaciales interactivas para evaluar el territorio de la microcuenca.")
     
     tile_url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
     attr_map = "Esri" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
@@ -333,15 +350,16 @@ with tab2:
     if ver_iiss:
         agregar_capa_ee(mapa, iiss_clase, {"min": 1, "max": 4, "palette": ["#fed976", "#fd8d3c", "#fc4e2a", "#bd0026"]}, "IISS (Susceptibilidad)", opacity=0.7)
     if ver_vci and img_vci is not None:
-        agregar_capa_ee(mapa, img_vci, {"min": 0, "max": 100, "palette": ["#d73027", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "VCI (Vegetación)", opacity=0.6)
+        agregar_capa_ee(mapa, img_vci, {"min": 0, "max": 100, "palette": ["#d73027", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "VCI (Condición Vegetativa)", opacity=0.6)
+    if ver_precip and img_precip is not None:
+        agregar_capa_ee(mapa, img_precip, {"min": 50, "max": 400, "palette": ["#b2182b", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "Precipitación Acumulada 3m", opacity=0.6)
         
     folium.LayerControl().add_to(mapa)
-    st_folium(mapa, width=None, height=550, key="mapa_graficos_hectareas_v2")
+    st_folium(mapa, width=None, height=550, key="mapa_condiciones_húmedas_spi")
 
 with tab3:
     st.subheader("Metodología del Sistema")
     st.markdown("""
-    * **Gráfico SPI-3 Histórico:** Separa visualmente las condiciones de sequía moderada, severa y normal mediante barras estandarizadas.
-    * **Cálculo de Hectáreas:** Cuantifica espacialmente la superficie de afectación por cada clase temática.
-    * **Monitoreo Satelital:** Integración en tiempo real con MODIS y CHIRPS a través de Google Earth Engine.
+    * **Gráfico SPI-3 en Rojo:** Diseñado bajo los lineamientos meteorológicos estándar para identificar de un vistazo los años secos críticos en tonos rojos y naranjas.
+    * **Capas del Mapa:** Integración espacial cruzada de índices de vegetación (VCI), susceptibilidad del terreno (IISS) y acumulados de precipitación (CHIRPS).
     """)
