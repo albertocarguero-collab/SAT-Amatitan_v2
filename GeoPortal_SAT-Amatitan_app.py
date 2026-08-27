@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas y zonas vectorizadas en polígonos en el mapa.
+Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas y zonas vectorizadas seguras en el mapa.
 """
 import datetime
 import altair as alt
@@ -354,33 +354,36 @@ with tab2:
     if ver_precip and img_precip is not None:
         agregar_capa_ee(mapa, img_precip, {"min": 50, "max": 400, "palette": ["#b2182b", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "Precipitación Acumulada 3m", opacity=0.5)
 
-    # Conversión de zonas ráster a Polígonos Vectoriales en Earth Engine para identificación precisa
+    # Conversión segura de zonas ráster a Polígonos Vectoriales
     if ver_poligonos:
         try:
             vectores_zonas = iiss_clase.reduceToVectors(
                 geometry=geom_base,
-                scale=100,
+                scale=150,  # Escala optimizada para evitar sobrecarga
                 geometryType='polygon',
                 eightConnected=False,
                 maxPixels=1e9
             )
+            geojson_data = vectores_zonas.getInfo()
             
-            def estilo_poligono(feature):
-                clase = feature['properties'].get('IISS_clase', 1)
-                color_hex = COLORES_ALERTA.get(clase, "#3388ff")
-                return {
-                    'fillColor': color_hex,
-                    'color': '#000000',
-                    'weight': 1,
-                    'fillOpacity': 0.65
-                }
-            
-            folium.GeoJson(
-                vectores_zonas.getInfo(),
-                name="Polígonos de Condición (Zonas)",
-                style_function=estilo_poligono,
-                tooltip=folium.GeoJsonTooltip(fields=['IISS_clase'], aliases=['Nivel de Condición (Clase):'])
-            ).add_to(mapa)
+            # Validación estricta de que existan features válidas
+            if geojson_data and "features" in geojson_data and len(geojson_data["features"]) > 0:
+                def estilo_poligono(feature):
+                    clase = feature.get('properties', {}).get('IISS_clase', 1)
+                    color_hex = COLORES_ALERTA.get(clase, "#3388ff")
+                    return {
+                        'fillColor': color_hex,
+                        'color': '#000000',
+                        'weight': 1,
+                        'fillOpacity': 0.65
+                    }
+                
+                folium.GeoJson(
+                    geojson_data,
+                    name="Polígonos de Condición (Zonas)",
+                    style_function=estilo_poligono,
+                    tooltip=folium.GeoJsonTooltip(fields=['IISS_clase'], aliases=['Nivel de Condición (Clase):'])
+                ).add_to(mapa)
         except Exception:
             pass
 
