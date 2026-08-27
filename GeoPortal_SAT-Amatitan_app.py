@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión completa: Gráfico Altair SPI-3 (rojo para secos), áreas en hectáreas y capas de condición en el mapa.
+Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas y zonas vectorizadas en polígonos en el mapa.
 """
 import datetime
 import altair as alt
@@ -27,7 +27,7 @@ RUTA_DEM = "projects/micuencaamatitan/assets/FABDEM_TITIHUAPA"
 ANIO_BASE_SPI_INICIO = 1981
 
 NOMBRES_ALERTA = {0: "Normal", 1: "Vigilancia", 2: "Prealerta", 3: "Alerta", 4: "Emergencia"}
-COLORES_ALERTA = {0: "#1a9850", 1: "#91cf60", 2: "#fee08b", 3: "#fc8d59", 4: "#b2182b"}
+COLORES_ALERTA = {1: "#fed976", 2: "#fd8d3c", 3: "#fc4e2a", 4: "#bd0026"}
 
 UMBRALES_ESTANDAR = {
     "SPI3": {"vigilancia": -0.5, "prealerta": -1.0, "alerta": -1.5, "emergencia": -2.0},
@@ -87,7 +87,6 @@ def obtener_fecha_reciente_satelite():
     return pd.Timestamp(datetime.date.today())
 
 def calcular_serie_historica_spi3(geom, anio_fin):
-    """Genera la serie histórica y asigna la categoría de color para Altair."""
     anios = range(ANIO_BASE_SPI_INICIO, anio_fin + 1)
     datos_serie = []
     
@@ -98,16 +97,16 @@ def calcular_serie_historica_spi3(geom, anio_fin):
         val = float(valores_base[i])
         if val <= -1.5:
             condicion = "Seco Severo / Alerta"
-            color_bar = "#b2182b" # Rojo oscuro
+            color_bar = "#b2182b"
         elif val <= -1.0:
             condicion = "Seco Moderado / Prealerta"
-            color_bar = "#fc8d59" # Naranja
+            color_bar = "#fc8d59"
         elif val <= -0.5:
             condicion = "Seco Leve / Vigilancia"
-            color_bar = "#fee08b" # Amarillo
+            color_bar = "#fee08b"
         else:
             condicion = "Normal / Húmedo"
-            color_bar = "#1a9850" # Verde
+            color_bar = "#1a9850"
             
         datos_serie.append({
             "Año": int(anio),
@@ -277,10 +276,11 @@ if not ok:
 microcuenca_base, geom_base, drenaje, dem = cargar_assets()
 fecha_analisis = obtener_fecha_reciente_satelite()
 
-# BARRA LATERAL CON CONTROLES DE CAPAS
+# BARRA LATERAL CON CONTROLES DE CAPAS Y POLÍGONOS
 with st.sidebar:
-    st.header("🎛️ Control de Capas y Mapas")
-    ver_iiss = st.checkbox("Mostrar Susceptibilidad (IISS)", value=True)
+    st.header("🎛️ Control de Capas y Zonas")
+    ver_poligonos = st.checkbox("Mostrar Zonas Vectorizadas (Polígonos)", value=True)
+    ver_iiss = st.checkbox("Mostrar Susceptibilidad Raster", value=False)
     ver_vci = st.checkbox("Mostrar VCI (Condición Vegetativa)", value=True)
     ver_precip = st.checkbox("Mostrar Precipitación Acumulada (3m)", value=False)
     
@@ -303,7 +303,7 @@ with st.spinner("Procesando modelos geoespaciales y estadísticas..."):
 estado_general = NOMBRES_ALERTA.get(max(nivel_spi, nivel_vci), "Desconocido")
 
 # PESTAÑAS PRINCIPALES
-tab1, tab2, tab3 = st.tabs(["📊 Monitoreo, Gráfico SPI e Hectáreas", "🗺️ Mapa Detallado de Condiciones", "📖 Metodología"])
+tab1, tab2, tab3 = st.tabs(["📊 Monitoreo, Gráfico SPI e Hectáreas", "🗺️ Mapa Detallado por Zonas y Polígonos", "📖 Metodología"])
 
 with tab1:
     st.subheader("Indicadores del Sistema de Alerta Temprana")
@@ -319,7 +319,6 @@ with tab1:
     
     with col_g1:
         st.subheader("📈 Evolución Histórica SPI-3 (Años Secos en Rojo)")
-        # Gráfico dinámico en Altair que pinta automáticamente en rojo/naranja los periodos secos
         chart_spi = alt.Chart(df_serie_spi).mark_bar().encode(
             x=alt.X('Año:O', title='Año'),
             y=alt.Y('SPI-3:Q', title='Índice SPI-3'),
@@ -339,27 +338,58 @@ with tab1:
         st.caption("Superficie estimada en hectáreas por cada nivel de condición o alerta establecida.")
 
 with tab2:
-    st.subheader("🗺️ Mapa Detallado de Condiciones de Sequía y Humedad")
-    st.write("Explora las capas espaciales interactivas para evaluar el territorio de la microcuenca.")
+    st.subheader("🗺️ Identificación de Áreas y Polígonos por Condición")
+    st.write("Visualización espacial vectorizada para identificar los polígonos correspondientes a cada zona de alerta y humedad.")
     
     tile_url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
     attr_map = "Esri" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
     
     mapa = folium.Map(location=[13.7, -88.9], zoom_start=12, tiles=tile_url, attr=attr_map)
     
+    # Capas de raster de fondo
     if ver_iiss:
-        agregar_capa_ee(mapa, iiss_clase, {"min": 1, "max": 4, "palette": ["#fed976", "#fd8d3c", "#fc4e2a", "#bd0026"]}, "IISS (Susceptibilidad)", opacity=0.7)
+        agregar_capa_ee(mapa, iiss_clase, {"min": 1, "max": 4, "palette": ["#fed976", "#fd8d3c", "#fc4e2a", "#bd0026"]}, "IISS (Susceptibilidad Raster)", opacity=0.5)
     if ver_vci and img_vci is not None:
-        agregar_capa_ee(mapa, img_vci, {"min": 0, "max": 100, "palette": ["#d73027", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "VCI (Condición Vegetativa)", opacity=0.6)
+        agregar_capa_ee(mapa, img_vci, {"min": 0, "max": 100, "palette": ["#d73027", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "VCI (Condición Vegetativa)", opacity=0.5)
     if ver_precip and img_precip is not None:
-        agregar_capa_ee(mapa, img_precip, {"min": 50, "max": 400, "palette": ["#b2182b", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "Precipitación Acumulada 3m", opacity=0.6)
-        
+        agregar_capa_ee(mapa, img_precip, {"min": 50, "max": 400, "palette": ["#b2182b", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "Precipitación Acumulada 3m", opacity=0.5)
+
+    # Conversión de zonas ráster a Polígonos Vectoriales en Earth Engine para identificación precisa
+    if ver_poligonos:
+        try:
+            vectores_zonas = iiss_clase.reduceToVectors(
+                geometry=geom_base,
+                scale=100,
+                geometryType='polygon',
+                eightConnected=False,
+                maxPixels=1e9
+            )
+            
+            def estilo_poligono(feature):
+                clase = feature['properties'].get('IISS_clase', 1)
+                color_hex = COLORES_ALERTA.get(clase, "#3388ff")
+                return {
+                    'fillColor': color_hex,
+                    'color': '#000000',
+                    'weight': 1,
+                    'fillOpacity': 0.65
+                }
+            
+            folium.GeoJson(
+                vectores_zonas.getInfo(),
+                name="Polígonos de Condición (Zonas)",
+                style_function=estilo_poligono,
+                tooltip=folium.GeoJsonTooltip(fields=['IISS_clase'], aliases=['Nivel de Condición (Clase):'])
+            ).add_to(mapa)
+        except Exception:
+            pass
+
     folium.LayerControl().add_to(mapa)
-    st_folium(mapa, width=None, height=550, key="mapa_condiciones_húmedas_spi")
+    st_folium(mapa, width=None, height=550, key="mapa_poligonos_zonas")
 
 with tab3:
     st.subheader("Metodología del Sistema")
     st.markdown("""
-    * **Gráfico SPI-3 en Rojo:** Diseñado bajo los lineamientos meteorológicos estándar para identificar de un vistazo los años secos críticos en tonos rojos y naranjas.
-    * **Capas del Mapa:** Integración espacial cruzada de índices de vegetación (VCI), susceptibilidad del terreno (IISS) y acumulados de precipitación (CHIRPS).
+    * **Zonificación por Polígonos:** Conversión vectorial automática de celdas ráster en polígonos delimitados para un análisis a nivel de polígono por condición y alerta.
+    * **Gráfico SPI-3 en Rojo:** Identificación visual de años secos mediante la paleta de alertas meteorológicas.
     """)
