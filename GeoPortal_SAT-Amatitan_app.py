@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas y zonas vectorizadas con saneamiento de geometrías.
+Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas y zonas vectorizadas seguras.
 """
 import datetime
 import altair as alt
@@ -354,7 +354,7 @@ with tab2:
     if ver_precip and img_precip is not None:
         agregar_capa_ee(mapa, img_precip, {"min": 50, "max": 400, "palette": ["#b2182b", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "Precipitación Acumulada 3m", opacity=0.5)
 
-    # Conversión segura y saneamiento de zonas ráster a Polígonos Vectoriales
+    # Conversión segura y saneamiento robusto de zonas ráster a Polígonos Vectoriales
     if ver_poligonos:
         try:
             vectores_zonas = iiss_clase.reduceToVectors(
@@ -367,11 +367,16 @@ with tab2:
             geojson_data = vectores_zonas.getInfo()
             
             if geojson_data and "features" in geojson_data:
-                # Filtrar features vacías o sin geometría válida para evitar errores en Folium
-                features_validas = [
-                    f for f in geojson_data["features"] 
-                    if f.get("geometry") and f["geometry"].get("coordinates")
-                ]
+                features_validas = []
+                for f in geojson_data["features"]:
+                    if f.get("geometry") and f["geometry"].get("coordinates"):
+                        props = f.get("properties", {})
+                        if props is None:
+                            props = {}
+                        if "IISS_clase" not in props:
+                            props["IISS_clase"] = 1
+                        f["properties"] = props
+                        features_validas.append(f)
                 
                 if len(features_validas) > 0:
                     geojson_saneado = {
@@ -380,8 +385,9 @@ with tab2:
                     }
                     
                     def estilo_poligono(feature):
-                        clase = feature.get('properties', {}).get('IISS_clase', 1)
-                        color_hex = COLORES_ALERTA.get(clase, "#3388ff")
+                        props = feature.get('properties', {})
+                        clase = props.get('IISS_clase', 1) if props else 1
+                        color_hex = COLORES_ALERTA.get(int(clase), "#3388ff")
                         return {
                             'fillColor': color_hex,
                             'color': '#000000',
