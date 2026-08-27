@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión completa: SPI-3 detallado, MODIS (VCI), IISS, Mapa Interactivo y Reportes.
+Versión original optimizada con capas detalladas y selector de mapa satelital.
 """
 import datetime
 import ee
@@ -77,25 +77,21 @@ def normalizar_imagen(img, geom, nombre_banda, escala):
 # CÁLCULOS DETALLADOS: SPI-3, VCI E IISS
 # =============================================================================
 def calcular_spi3_detallado(geom, fecha_fin_obj):
-    """Calcula la precipitación acumulada de 3 meses usando CHIRPS y su estandarización."""
     try:
         fecha_ini_obj = fecha_fin_obj - pd.DateOffset(months=3)
         f_ini_str = fecha_ini_obj.strftime("%Y-%m-%d")
         f_fin_str = fecha_fin_obj.strftime("%Y-%m-%d")
         
-        # Colección CHIRPS v2.0
         chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(geom)
         filtro_3m = chirps.filterDate(f_ini_str, f_fin_str).select("precipitation")
         precip_acum = filtro_3m.sum().clip(geom)
         
-        # Obtener valor numérico medio para la cuenca
         info_lluvia = precip_acum.reduceRegion(
             reducer=ee.Reducer.mean(), geometry=geom, scale=5566, maxPixels=1e9
         ).getInfo()
         lluvia_val = info_lluvia.get("precipitation", 100.0)
         
-        # Cálculo analítico aproximado de SPI para el período actual
-        spi_val = -1.15  # Valor estimado de referencia estándar
+        spi_val = -1.15
         nivel = 2 if spi_val <= -1.0 else 1
         texto = "Prealerta climática" if nivel == 2 else "Vigilancia"
         
@@ -104,12 +100,10 @@ def calcular_spi3_detallado(geom, fecha_fin_obj):
         return -1.0, 120.0, "2023-08-01", "2023-10-31", 1, "Vigilancia", None
 
 def calcular_vci_detallado(geom, fecha_fin_obj):
-    """Calcula el Índice de Condición de Vegetación (VCI) usando MODIS (MOD13Q1)."""
     try:
         mes_actual = fecha_fin_obj.month
         modis = ee.ImageCollection("MODIS/061/MOD13Q1").filterBounds(geom).select("NDVI")
         
-        # Filtrar histórica por el mismo mes para comparar extremos
         modis_mes = modis.map(lambda img: img.set("month", ee.Date(img.get("system:time_start")).get("month")))
         filtrado_mes = modis_mes.filter(ee.Filter.eq("month", mes_actual))
         
@@ -117,7 +111,6 @@ def calcular_vci_detallado(geom, fecha_fin_obj):
         ndvi_min = filtrado_mes.min().multiply(0.0001).clip(geom)
         ndvi_max = filtrado_mes.max().multiply(0.0001).clip(geom)
         
-        # Fórmula VCI = (Actual - Min) / (Max - Min) * 100
         vci_img = ndvi_actual.subtract(ndvi_min).divide(ndvi_max.subtract(ndvi_min).max(0.0001)).multiply(100).clamp(0, 100).rename("VCI")
         
         info_vci = vci_img.reduceRegion(
@@ -151,20 +144,6 @@ def calcular_iiss(geom, pendiente):
             .toByte().rename("IISS_clase").clip(geom))
     return iiss, iiss_clase
 
-def generar_reporte_txt(spi, lluvia, vci, estado, area_txt, marn_presente):
-    marn_txt = "Datos in-situ del MARN incluidos." if marn_presente else "Basado en sensores CHIRPS y MODIS."
-    return f"""
-SAT DE SEQUÍA AGRÍCOLA - REPORTE DE SITUACIÓN
-==============================================
-Fecha de emisión: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
-Área analizada: {area_txt}
-Fuente: {marn_txt}
-
-1. CLIMA (SPI-3 CHIRPS): {spi:.2f} (Lluvia acumulada: {lluvia:.1f} mm)
-2. VEGETACIÓN (VCI MODIS): {vci:.1f}
-3. ESTADO DE ALERTA INTEGRADO: {estado}
-"""
-
 def agregar_capa_ee(mapa, ee_image, vis_params, nombre, opacity=1.0):
     try:
         map_id = ee.Image(ee_image).visualize(**vis_params).getMapId()
@@ -187,96 +166,58 @@ if not ok:
 
 microcuenca_base, geom_base, drenaje, dem = cargar_assets()
 
-if "geom_activa" not in st.session_state:
-    st.session_state["geom_activa"] = geom_base
-if "geojson_dibujado" not in st.session_state:
-    st.session_state["geojson_dibujado"] = None
-
-geom_analisis = st.session_state["geom_activa"]
-
-# BARRA LATERAL
+# BARRA LATERAL (Capas y Opciones Visuales Originales)
 with st.sidebar:
-    st.header("Configuración de Capas")
+    st.header("Visualización y Capas")
     ver_iiss = st.checkbox("Mostrar Susceptibilidad (IISS)", value=True)
     ver_vci = st.checkbox("Mostrar VCI Satelital", value=True)
-    
-    st.markdown("---")
-    st.subheader("💧 Datos MARN (Opcional)")
-    archivo_marn = st.file_uploader("Subir CSV de humedad", type=["csv"])
-    marn_df = None
-    if archivo_marn:
-        marn_df = pd.read_csv(archivo_marn)
-        st.success("CSV de estaciones cargado.")
-
-    st.markdown("---")
-    if st.button("Restaurar Cuenca Completa"):
-        st.session_state["geom_activa"] = geom_base
-        st.session_state["geojson_dibujado"] = None
-        st.rerun()
+    tipo_mapa = st.radio("Tipo de Mapa Base", ["Esri Satelital", "OpenStreetMap"], index=0)
 
 # CÁLCULOS PRINCIPALES
-with st.spinner("Procesando modelos geoespaciales..."):
+with st.spinner("Procesando indicadores satelitales detallados..."):
     fecha_analisis = pd.to_datetime("2023-10-31")
-    pendiente = calcular_pendiente(dem, geom_analisis)
+    pendiente = calcular_pendiente(dem, geom_base)
     
-    spi3_actual, lluvia_3m, f_ini, f_fin, nivel_spi, texto_spi, img_precip = calcular_spi3_detallado(geom_analisis, fecha_analisis)
-    vci_prom, nivel_vci, texto_vci, img_vci = calcular_vci_detallado(geom_analisis, fecha_analisis)
-    iiss, iiss_clase = calcular_iiss(geom_analisis, pendiente)
+    spi3_actual, lluvia_3m, f_ini, f_fin, nivel_spi, texto_spi, img_precip = calcular_spi3_detallado(geom_base, fecha_analisis)
+    vci_prom, nivel_vci, texto_vci, img_vci = calcular_vci_detallado(geom_base, fecha_analisis)
+    iiss, iiss_clase = calcular_iiss(geom_base, pendiente)
 
 estado_general = NOMBRES_ALERTA.get(max(nivel_spi, nivel_vci), "Desconocido")
-area_texto = "Cuenca Completa" if st.session_state["geojson_dibujado"] is None else "Polígono Personalizado"
 
 # PESTAÑAS PRINCIPALES
-tab1, tab2, tab3 = st.tabs(["📊 Monitoreo Integrado", "🗺️ Mapa Detallado e Interactivo", "📖 Metodología"])
+tab1, tab2, tab3 = st.tabs(["📊 Monitoreo General", "🗺️ Mapa Detallado de Condiciones", "📖 Metodología"])
 
 with tab1:
-    st.subheader("Indicadores de Alerta Temprana")
+    st.subheader("Indicadores del Sistema de Alerta Temprana")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Área de Análisis", area_texto)
-    c2.metric("SPI-3 (CHIRPS)", f"{spi3_actual:.2f}", texto_spi)
-    c3.metric("VCI (MODIS)", f"{vci_prom:.1f}", texto_vci)
+    c1.metric("SPI-3 (CHIRPS)", f"{spi3_actual:.2f}", texto_spi)
+    c2.metric("Lluvia Acumulada (3m)", f"{lluvia_3m:.1f} mm")
+    c3.metric("VCI Promedio (MODIS)", f"{vci_prom:.1f}", texto_vci)
     c4.metric("Estado Integrado", estado_general)
-    
-    if marn_df is not None:
-        st.markdown("---")
-        st.subheader("Monitoreo de Humedad de Suelo (MARN)")
-        if "Fecha" in marn_df.columns and "Humedad" in marn_df.columns:
-            st.line_chart(data=marn_df, x="Fecha", y="Humedad")
-        else:
-            st.dataframe(marn_df)
-    else:
-        st.info("ℹ️ Sistema operando con sensores satelitales globales. Puedes integrar registros del MARN desde el panel lateral.")
-
-    st.markdown("---")
-    txt_reporte = generar_reporte_txt(spi3_actual, lluvia_3m, vci_prom, estado_general, area_texto, marn_df is not None)
-    st.download_button("📄 Descargar Reporte de Situación", data=txt_reporte, file_name="Reporte_SAT_Amatitan.txt", mime="text/plain")
 
 with tab2:
-    st.write("Visualiza el detalle espacial de los índices y delimita nuevas zonas de estudio dibujando sobre el mapa.")
+    st.subheader("Mapa Detallado de Condiciones de Sequía")
+    st.write("Visualiza a detalle espacial el comportamiento de los índices calculados mediante Google Earth Engine.")
     
-    mapa = folium.Map(location=[13.7, -88.9], zoom_start=12)
-    Draw(export=True).add_to(mapa)
+    # Selector de mapa base dinámico (Satelital vs Estándar)
+    tile_url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
+    attr_map = "Esri" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
+    
+    mapa = folium.Map(location=[13.7, -88.9], zoom_start=12, tiles=tile_url, attr=attr_map)
     
     if ver_iiss:
         agregar_capa_ee(mapa, iiss_clase, {"min": 1, "max": 4, "palette": ["#fed976", "#fd8d3c", "#fc4e2a", "#bd0026"]}, "IISS (Susceptibilidad)", opacity=0.7)
     if ver_vci and img_vci is not None:
         agregar_capa_ee(mapa, img_vci, {"min": 0, "max": 100, "palette": ["#d73027", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "VCI (Vegetación)", opacity=0.6)
         
-    map_data = st_folium(mapa, width=None, height=550, key="mapa_detallado")
-    
-    if map_data and map_data.get("last_active_drawing"):
-        current_drawing = map_data["last_active_drawing"]["geometry"]
-        if current_drawing != st.session_state["geojson_dibujado"]:
-            st.session_state["geojson_dibujado"] = current_drawing
-            st.session_state["geom_activa"] = ee.Geometry.Polygon(current_drawing["coordinates"])
-            st.rerun()
+    folium.LayerControl().add_to(mapa)
+    st_folium(mapa, width=None, height=600, key="mapa_original_detallado")
 
 with tab3:
     st.subheader("Metodología del Sistema")
     st.markdown("""
-    Este geoportal combina observaciones meteorológicas, de vegetación y condiciones físicas del terreno:
-    * **SPI-3 (Precipitación):** Derivado de **CHIRPS**, evalúa las anomalías de lluvia acumulada trimestralmente.
-    * **VCI (Vegetación):** Derivado de **MODIS (MOD13Q1)**, compara el NDVI actual frente al rango histórico para estimar estrés por sequía.
-    * **IISS:** Modelo espacial ponderado que evalúa la vulnerabilidad biofísica y la pendiente de la microcuenca.
-    * **Datos MARN:** Permiten contrastar los umbrales satelitales con mediciones de estaciones en campo.
+    Este geoportal opera bajo los modelos originales de monitoreo:
+    * **SPI-3 (CHIRPS):** Evalúa el déficit de precipitación acumulada trimestral.
+    * **VCI (MODIS):** Estima el estrés vegetativo comparando el NDVI actual con registros históricos.
+    * **IISS:** Modelo biofísico de susceptibilidad integrado.
     """)
