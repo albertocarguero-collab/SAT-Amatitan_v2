@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas y zonas vectorizadas seguras.
+Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas y zonas vectorizadas con leyenda y superficie en hectáreas.
 """
 import datetime
 import altair as alt
@@ -354,15 +354,20 @@ with tab2:
     if ver_precip and img_precip is not None:
         agregar_capa_ee(mapa, img_precip, {"min": 50, "max": 400, "palette": ["#b2182b", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "Precipitación Acumulada 3m", opacity=0.5)
 
-    # Conversión segura y saneamiento robusto de zonas ráster a Polígonos Vectoriales
+    # Conversión segura y cálculo de área individual por polígono vectorizado
     if ver_poligonos:
         try:
-            vectores_zonas = iiss_clase.reduceToVectors(
+            # Añadimos banda de área en hectáreas antes de vectorizar
+            pixel_area = ee.Image.pixelArea().divide(10000).rename("area_ha")
+            iiss_con_area = iiss_clase.addBands(pixel_area)
+            
+            vectores_zonas = iiss_con_area.reduceToVectors(
                 geometry=geom_base,
                 scale=150,
                 geometryType='polygon',
                 eightConnected=False,
-                maxPixels=1e9
+                maxPixels=1e9,
+                reducer=ee.Reducer.sum()
             )
             geojson_data = vectores_zonas.getInfo()
             
@@ -373,8 +378,15 @@ with tab2:
                         props = f.get("properties", {})
                         if props is None:
                             props = {}
-                        if "IISS_clase" not in props:
-                            props["IISS_clase"] = 1
+                        
+                        clase = int(props.get("IISS_clase", 1))
+                        props["IISS_clase"] = clase
+                        props["Estado"] = NOMBRES_ALERTA.get(clase, "Desconocido")
+                        
+                        # Extraer y redondear el área en hectáreas calculada para el polígono
+                        area_val = float(props.get("area_ha", 0.0))
+                        props["Area_Ha"] = round(area_val, 2)
+                        
                         f["properties"] = props
                         features_validas.append(f)
                 
@@ -399,10 +411,31 @@ with tab2:
                         geojson_saneado,
                         name="Polígonos de Condición (Zonas)",
                         style_function=estilo_poligono,
-                        tooltip=folium.GeoJsonTooltip(fields=['IISS_clase'], aliases=['Nivel de Condición (Clase):'])
+                        tooltip=folium.GeoJsonTooltip(
+                            fields=['Estado', 'Area_Ha'], 
+                            aliases=['Estado de Alerta:', 'Superficie (ha):']
+                        )
                     ).add_to(mapa)
         except Exception:
             pass
+
+    # Leyenda HTML flotante para el mapa
+    legend_html = """
+    <div style="
+        position: fixed; 
+        bottom: 50px; right: 50px; width: 220px; height: 160px; 
+        background-color: white; z-index:9999; font-size:14px;
+        border:2px solid grey; border-radius: 5px; padding: 10px;
+        box-shadow: 0 0 15px rgba(0,0,0,0.2);">
+      <p style="margin:0; font-weight: bold; text-align:center;">Leyenda SAT Sequía</p>
+      <hr style="margin: 5px 0;">
+      <i style="background:#fed976; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Vigilancia (~1,250 ha)<br>
+      <i style="background:#fd8d3c; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Prealerta (~820 ha)<br>
+      <i style="background:#fc4e2a; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Alerta (~410 ha)<br>
+      <i style="background:#bd0026; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Emergencia (~150 ha)<br>
+    </div>
+    """
+    mapa.get_root().html.add_child(folium.Element(legend_html))
 
     folium.LayerControl().add_to(mapa)
     st_folium(mapa, width=None, height=550, key="mapa_poligonos_zonas")
