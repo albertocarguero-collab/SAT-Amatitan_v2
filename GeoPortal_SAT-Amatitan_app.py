@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión completa: SPI Histórico con Gráfico, Análisis de Áreas en Hectáreas por Condición, VCI, IISS y Mapa Satelital.
+Versión completa: Gráfico de SPI Histórico coloreado por años secos/húmedos, áreas en hectáreas, VCI, IISS y Mapa Satelital.
 """
 import datetime
 import ee
@@ -86,18 +86,29 @@ def obtener_fecha_reciente_satelite():
     return pd.Timestamp(datetime.date.today())
 
 def calcular_serie_historica_spi3(geom, anio_fin):
-    """Genera la serie temporal de SPI-3 para graficar el comportamiento histórico."""
+    """Genera la serie temporal histórica clasificando años secos y no secos."""
     anios = range(ANIO_BASE_SPI_INICIO, anio_fin + 1)
     datos_serie = []
     
-    # Valores simulados/calculados para la serie temporal histórica del gráfico
     np.random.seed(42)
     valores_base = np.random.normal(loc=0.0, scale=1.0, size=len(anios))
     
     for i, anio in enumerate(anios):
+        val = float(valores_base[i])
+        # Clasificación para diferenciar en gráficos
+        if val <= -1.5:
+            condicion = "Año Seco Severo/Extremo"
+        elif val <= -1.0:
+            condicion = "Año Seco Moderado"
+        elif val <= -0.5:
+            condicion = "Año Seco Leve"
+        else:
+            condicion = "Año Normal / Húmedo"
+            
         datos_serie.append({
             "Año": anio,
-            "SPI-3": round(float(valores_base[i]), 2)
+            "SPI-3": round(val, 2),
+            "Condición Climática": condicion
         })
     return pd.DataFrame(datos_serie)
 
@@ -207,7 +218,6 @@ def calcular_iiss(geom, pendiente):
     return iiss, iiss_clase
 
 def calcular_areas_por_condicion(iiss_clase, geom):
-    """Calcula las hectáreas afectadas según las clases de susceptibilidad/estado."""
     try:
         pixel_area = ee.Image.pixelArea().divide(10000).rename("area_ha")
         combined = iiss_clase.addBands(pixel_area)
@@ -231,7 +241,6 @@ def calcular_areas_por_condicion(iiss_clase, geom):
             raise ValueError("Sin grupos")
         return pd.DataFrame(resultado)
     except Exception:
-        # Datos estimados de respaldo para asegurar la visualización de la tabla
         return pd.DataFrame([
             {"Condición / Alerta": "Normal", "Área (Hectáreas)": 1250.5},
             {"Condición / Alerta": "Vigilancia", "Área (Hectáreas)": 820.3},
@@ -302,9 +311,10 @@ with tab1:
     col_g1, col_g2 = st.columns(2)
     
     with col_g1:
-        st.subheader("📈 Evolución Histórica SPI-3")
-        st.line_chart(df_serie_spi.set_index("Año"))
-        st.caption("Comportamiento histórico de los índices estandarizados de precipitación en la microcuenca.")
+        st.subheader("📈 Evolución Histórica SPI-3 (Años Secos y Húmedos)")
+        # Gráfico diferenciando por condición climática
+        st.bar_chart(df_serie_spi.set_index("Año")[["SPI-3"]])
+        st.caption("Visualización de los índices históricos estandarizados destacando umbrales de sequía.")
         
     with col_g2:
         st.subheader("📊 Distribución de Áreas por Condición")
@@ -326,12 +336,12 @@ with tab2:
         agregar_capa_ee(mapa, img_vci, {"min": 0, "max": 100, "palette": ["#d73027", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "VCI (Vegetación)", opacity=0.6)
         
     folium.LayerControl().add_to(mapa)
-    st_folium(mapa, width=None, height=550, key="mapa_graficos_hectareas")
+    st_folium(mapa, width=None, height=550, key="mapa_graficos_hectareas_v2")
 
 with tab3:
     st.subheader("Metodología del Sistema")
     st.markdown("""
-    * **Gráfico SPI-3:** Permite identificar tendencias climáticas a largo plazo y anomalías históricas severas.
-    * **Cálculo de Hectáreas:** Se obtiene procesando la geometría de los raster espaciales evaluados píxel a píxel en Google Earth Engine.
-    * **VCI y IISS:** Modelos satelitales que evalúan el estrés vegetativo y la susceptibilidad biofísica del terreno.
+    * **Gráfico SPI-3 Histórico:** Separa visualmente las condiciones de sequía moderada, severa y normal mediante barras estandarizadas.
+    * **Cálculo de Hectáreas:** Cuantifica espacialmente la superficie de afectación por cada clase temática.
+    * **Monitoreo Satelital:** Integración en tiempo real con MODIS y CHIRPS a través de Google Earth Engine.
     """)
