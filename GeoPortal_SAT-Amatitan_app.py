@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas, zonas vectorizadas con leyenda y reporte dinámico por periodo consultado.
+Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas, zonas vectorizadas con leyenda, reporte dinámico por periodo consultado e integración de datos locales SNET.
 """
 
 import datetime
@@ -14,6 +14,8 @@ import pandas as pd
 import scipy.stats as st_stats
 import streamlit as st
 from streamlit_folium import st_folium
+import requests
+from bs4 import BeautifulSoup
 
 # =============================================================================
 # CONFIGURACIÓN GENERAL Y CONSTANTES
@@ -87,7 +89,7 @@ def normalizar_imagen(img, geom, nombre_banda, escala):
     return img.subtract(min_val).divide(den).clamp(0, 1)
 
 # =============================================================================
-# OBTENCIÓN DINÁMICA DE FECHA Y CÁLCULOS HISTÓRICOS
+# OBTENCIÓN DINÁMICA DE FECHA, CÁLCULOS HISTÓRICOS Y SCRAPING
 # =============================================================================
 @st.cache_data(ttl=3600)
 def obtener_fecha_reciente_satelite():
@@ -100,6 +102,21 @@ def obtener_fecha_reciente_satelite():
     except Exception:
         pass
     return pd.Timestamp(datetime.date.today())
+
+@st.cache_data(ttl=3600)
+def obtener_datos_locales_snet(url="https://www.snet.gob.sv/Geologia/pcbase2/parametros.php"):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        tablas = pd.read_html(response.text)
+        if tablas:
+            df_local = tablas[0]
+            return df_local
+        return pd.DataFrame()
+    except Exception as e:
+        return pd.DataFrame()
 
 def calcular_serie_historica_spi3(geom, anio_fin):
     anios = range(ANIO_BASE_SPI_INICIO, anio_fin + 1)
@@ -353,6 +370,20 @@ with tab1:
     st.markdown("---")
     
     # -------------------------------------------------------------------------
+    # SECCIÓN: DATOS SNET (NUEVO)
+    # -------------------------------------------------------------------------
+    st.subheader("📡 Datos Locales en Tiempo Real (SNET)")
+    with st.spinner("Conectando con red telemétrica local..."):
+        df_snet = obtener_datos_locales_snet()
+        if not df_snet.empty:
+            st.dataframe(df_snet, use_container_width=True)
+            st.caption("Datos extraídos de estaciones terrestres oficiales (MARN). Usa esta información para validar los indicadores satelitales.")
+        else:
+            st.info("La plataforma del SNET no está disponible o la tabla no pudo ser extraída en este momento. Operando solo con datos satelitales.")
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------------------
     # SECCIÓN: OBSERVACIÓN Y DESCARGA DE DATOS/REPORTES
     # -------------------------------------------------------------------------
     with st.expander("📥 Observación de Datos Históricos y Generación de Reportes", expanded=False):
@@ -374,7 +405,6 @@ with tab1:
         with col_d2:
             st.markdown("**2. Reporte de Condiciones Actuales**")
             
-            # Cálculo dinámico del periodo analizado en meses
             try:
                 fecha_inicio_dt = pd.to_datetime(f_ini)
                 fecha_fin_dt = pd.to_datetime(f_fin)
@@ -384,7 +414,6 @@ with tab1:
             except Exception:
                 meses_analisis = 3
             
-            # Construcción dinámica del texto del reporte
             reporte_txt = f"""=======================================================
 REPORTE DE CONDICIONES - MICROCUENCA AMATITÁN
 =======================================================
@@ -423,7 +452,6 @@ with tab2:
     attr_map = "Esri" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
     mapa = folium.Map(location=[13.7, -88.9], zoom_start=12, tiles=tile_url, attr=attr_map)
 
-    # Capas raster de fondo
     if ver_iiss:
         agregar_capa_ee(mapa, iiss_clase, {"min": 1, "max": 4, "palette": ["#fed976", "#fd8d3c", "#fc4e2a", "#bd0026"]}, "IISS (Susceptibilidad Raster)", opacity=0.5)
 
@@ -433,7 +461,6 @@ with tab2:
     if ver_precip and img_precip is not None:
         agregar_capa_ee(mapa, img_precip, {"min": 50, "max": 400, "palette": ["#b2182b", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "Precipitación Acumulada 3m", opacity=0.5)
 
-    # Vectorización y estilo por polígono
     if ver_poligonos:
         try:
             pixel_area = ee.Image.pixelArea().divide(10000).rename("area_ha")
@@ -507,7 +534,6 @@ with tab2:
         except Exception as e:
             st.warning(f"No se pudieron renderizar los polígonos: {e}")
 
-    # Leyenda HTML flotante para el mapa
     legend_html = """
     <div style="
         position: fixed;
@@ -534,4 +560,5 @@ with tab3:
     * **Zonificación por Polígonos:** Conversión vectorial automática de celdas ráster en polígonos delimitados para un análisis a nivel de polígono por condición y alerta.
     * **Gráfico SPI-3 en Rojo:** Identificación visual de años secos mediante la paleta de alertas meteorológicas.
     * **Reporte Dinámico:** Adaptación automática del periodo reportado en meses y rango de fechas disponibles (ej. 3 meses, 6 meses, etc.) para su consulta y exportación.
+    * **Integración SNET:** Ingesta de datos locales del Ministerio de Medio Ambiente (MARN/SNET) para calibrar la validación y confianza de los índices satelitales.
     """)
