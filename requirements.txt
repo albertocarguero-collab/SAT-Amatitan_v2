@@ -9,4 +9,3 @@ scipy
 requests
 beautifulsoup4
 lxml
-import streamlit.components.v1 as components
