@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas, zonas vectorizadas con leyenda, reporte dinámico por periodo consultado e integración de datos locales SNET.
+Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas, zonas vectorizadas con leyenda, reporte dinámico, integración de datos locales SNET y mapa de humedad del suelo.
 """
 
 import datetime
@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import scipy.stats as st_stats
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_folium import st_folium
 import requests
 from bs4 import BeautifulSoup
@@ -382,6 +383,15 @@ with tab1:
             st.info("La plataforma del SNET no está disponible o la tabla no pudo ser extraída en este momento. Operando solo con datos satelitales.")
 
     st.markdown("---")
+    
+    # -------------------------------------------------------------------------
+    # SECCIÓN: MAPA INTERACTIVO HUMEDAD SNET (NUEVO)
+    # -------------------------------------------------------------------------
+    st.subheader("💧 Humedad del Suelo (Modelo SNET)")
+    st.write("Visualización interactiva de las condiciones actuales de humedad superficial a nivel nacional.")
+    components.iframe("https://www.snet.gob.sv/googlemaps/humedad/map2.php", height=550, scrolling=True)
+
+    st.markdown("---")
 
     # -------------------------------------------------------------------------
     # SECCIÓN: OBSERVACIÓN Y DESCARGA DE DATOS/REPORTES
@@ -561,4 +571,5 @@ with tab3:
     * **Gráfico SPI-3 en Rojo:** Identificación visual de años secos mediante la paleta de alertas meteorológicas.
     * **Reporte Dinámico:** Adaptación automática del periodo reportado en meses y rango de fechas disponibles (ej. 3 meses, 6 meses, etc.) para su consulta y exportación.
     * **Integración SNET:** Ingesta de datos locales del Ministerio de Medio Ambiente (MARN/SNET) para calibrar la validación y confianza de los índices satelitales.
+    * **Humedad del Suelo:** Incrustación directa del mapa oficial de humedad proporcionado por el observatorio ambiental nacional.
     """)
