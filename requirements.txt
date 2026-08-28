@@ -1,9 +1,11 @@
 streamlit
-earthengine-api
 streamlit-folium
 folium
+earthengine-api
 pandas
 numpy
+altair
 scipy
-matplotlib
-scikit-learn
+requests
+beautifulsoup4
+lxml
