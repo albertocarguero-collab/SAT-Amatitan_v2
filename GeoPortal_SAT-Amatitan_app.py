@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas y zonas vectorizadas con leyenda y superficie en hectáreas.
+Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas, zonas vectorizadas con leyenda y sección de descarga de reportes.
 """
 
 import datetime
@@ -349,6 +349,65 @@ with tab1:
         st.subheader("📊 Distribución de Áreas por Condición")
         st.dataframe(df_areas, use_container_width=True)
         st.caption("Superficie estimada en hectáreas por cada nivel de condición o alerta establecida.")
+        
+    st.markdown("---")
+    
+    # -------------------------------------------------------------------------
+    # NUEVA SECCIÓN: OBSERVACIÓN Y DESCARGA DE DATOS/REPORTES
+    # -------------------------------------------------------------------------
+    with st.expander("📥 Observación de Datos Históricos y Generación de Reportes", expanded=False):
+        st.write("Explora los datos fuente y genera un reporte imprimible de las condiciones en el periodo consultado.")
+        col_d1, col_d2 = st.columns(2)
+        
+        with col_d1:
+            st.markdown("**1. Datos Históricos SPI-3**")
+            # Mostrar la tabla interactivamente
+            st.dataframe(df_serie_spi.drop(columns=['Color']), use_container_width=True, height=200)
+            
+            # Botón para descargar CSV
+            csv_data = df_serie_spi.drop(columns=['Color']).to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📄 Descargar Datos Históricos (CSV)",
+                data=csv_data,
+                file_name=f'historico_spi3_amatitan_{fecha_analisis.year}.csv',
+                mime='text/csv'
+            )
+            
+        with col_d2:
+            st.markdown("**2. Reporte de Condiciones Actuales**")
+            
+            # Construir texto del reporte
+            reporte_txt = f"""=======================================================
+REPORTE DE CONDICIONES - MICROCUENCA AMATITÁN
+=======================================================
+Fecha de Análisis: {fecha_analisis.strftime('%d/%m/%Y')}
+
+--- INDICADORES PRINCIPALES ---
+SPI-3 Histórico (CHIRPS): {spi3_actual:.2f} ({texto_spi})
+Lluvia Acumulada (últimos 3 meses): {lluvia_3m:.1f} mm
+VCI Promedio (MODIS): {vci_prom:.1f}% ({texto_vci})
+Estado de Alerta General Integrado: {estado_general.upper()}
+
+--- DISTRIBUCIÓN DE SUPERFICIES POR CONDICIÓN ---
+"""
+            for _, row in df_areas.iterrows():
+                reporte_txt += f"• {row['Condición / Alerta']}: {row['Área (Hectáreas)']} hectáreas\n"
+
+            reporte_txt += f"""
+-------------------------------------------------------
+Reporte generado automáticamente desde el GeoPortal SAT
+Proyecto: Microcuenca Amatitán
+"""
+            # Vista previa del reporte
+            st.text_area("Vista Previa del Reporte", reporte_txt, height=200)
+            
+            # Botón para descargar TXT
+            st.download_button(
+                label="📝 Descargar Reporte (TXT)",
+                data=reporte_txt,
+                file_name=f'reporte_sat_amatitan_{fecha_analisis.strftime("%Y%m%d")}.txt',
+                mime='text/plain'
+            )
 
 with tab2:
     st.subheader("🗺️ Identificación de Áreas y Polígonos por Condición")
@@ -471,4 +530,5 @@ with tab3:
     st.markdown("""
     * **Zonificación por Polígonos:** Conversión vectorial automática de celdas ráster en polígonos delimitados para un análisis a nivel de polígono por condición y alerta.
     * **Gráfico SPI-3 en Rojo:** Identificación visual de años secos mediante la paleta de alertas meteorológicas.
+    * **Descarga de Reportes:** Consolidación de información espacial y atmosférica en archivos de texto (TXT) y descarga directa de tablas procesadas en formato CSV.
     """)
