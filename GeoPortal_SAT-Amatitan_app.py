@@ -258,7 +258,7 @@ def calcular_areas_por_condicion(iiss_clase, geom):
         stats = combined.reduceRegion(
             reducer=ee.Reducer.sum().group(groupField=0, groupName="clase"),
             geometry=geom,
-            scale=100,
+            scale=200,
             maxPixels=1e9
         ).getInfo()
 
@@ -333,7 +333,7 @@ with st.spinner("Procesando modelos geoespaciales y estadísticas..."):
     estado_general = NOMBRES_ALERTA.get(max(nivel_spi, nivel_vci), "Desconocido")
 
 # PESTAÑAS PRINCIPALES
-tab1, tab2, tab3 = st.tabs(["📊 Monitoreo, Gráfico SPI e Hectáreas", "🗺️ Mapa Detallado (Cuadrícula 1 ha)", "📖 Metodología"])
+tab1, tab2, tab3 = st.tabs(["📊 Monitoreo, Gráfico SPI e Hectáreas", "🗺️ Mapa Detallado (Cuadrícula 4 ha)", "📖 Metodología"])
 
 with tab1:
     st.subheader("Indicadores del Sistema de Alerta Temprana")
@@ -456,7 +456,7 @@ Proyecto: Microcuenca Amatitán
 
 with tab2:
     st.subheader("🗺️ Monitoreo a Nivel de Unidad (Cuadrícula Sintética)")
-    st.write("Visualización espacial mediante una cuadrícula regular de 1 hectárea por cuadro, calculando el estado predominante en cada unidad de terreno.")
+    st.write("Visualización espacial mediante una cuadrícula regular de 4 hectárea por cuadro, calculando el estado predominante en cada unidad de terreno.")
 
     tile_url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
     attr_map = "Esri" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
