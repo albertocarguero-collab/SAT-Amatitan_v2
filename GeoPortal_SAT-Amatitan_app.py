@@ -587,7 +587,7 @@ with tab2:
 with tab3:
     st.subheader("Metodología del Sistema")
     st.markdown("""
-    * **Zonificación por Cuadrícula:** Creación automática de unidades sintéticas regulares (1 hectárea) para evaluar las parcelas agrícolas.
+    * **Zonificación por Cuadrícula:** Creación automática de unidades sintéticas regulares (4 hectárea) para evaluar las parcelas agrícolas.
     * **Gráfico SPI-3 en Rojo:** Identificación visual de años secos mediante la paleta de alertas meteorológicas.
     * **Reporte Dinámico:** Adaptación automática del periodo reportado en meses y rango de fechas disponibles para su exportación.
     * **Integración SNET:** Ingesta de datos locales del MARN/SNET para calibrar la validación y confianza de los índices satelitales.
