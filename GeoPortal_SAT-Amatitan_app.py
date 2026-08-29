@@ -471,23 +471,35 @@ with tab2:
     if ver_precip and img_precip is not None:
         agregar_capa_ee(mapa, img_precip, {"min": 50, "max": 400, "palette": ["#b2182b", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "Precipitación Acumulada 3m", opacity=0.5)
 
-    if ver_poligonos:
+   if ver_poligonos:
         try:
-            with st.spinner("Generando cuadrícula de manejo (1 ha) y procesando alertas..."):
-                proj = ee.Projection('EPSG:3857').atScale(100) 
-                grid_hectareas = geom_base.coveringGrid(proj=proj)
-                unidades_analisis = grid_hectareas.map(lambda f: f.intersection(geom_base, 10))
+            with st.spinner("Generando cuadrícula de manejo (4 ha) y procesando alertas..."):
+                # 1. Definir la cuadrícula (escala 200 = 4 hectáreas aprox)
+                proj = ee.Projection('EPSG:3857').atScale(200) 
+                grid_base = geom_base.coveringGrid(proj=proj)
+                
+                # 2. FILTRO CLAVE 1: Dejar solo los cuadros que interceptan la microcuenca
+                grid_filtrado = grid_base.filterBounds(geom_base)
+                
+                # 3. Recortar la cuadrícula a los bordes exactos de la cuenca
+                unidades_analisis = grid_filtrado.map(lambda f: f.intersection(geom_base, 10))
 
+                # 4. Calcular el estado predominante en cada cuadro
                 grid_alertas = iiss_clase.reduceRegions(
                     collection=unidades_analisis,
                     reducer=ee.Reducer.mode().setOutputs(['IISS_clase']),
                     scale=30
                 )
                 
+                # 5. FILTRO CLAVE 2: Eliminar las celdas vacías que quedaron fuera del ráster
+                grid_alertas = grid_alertas.filter(ee.Filter.notNull(['IISS_clase']))
+                
                 def add_area(f):
                     return f.set('Area_Ha', f.geometry().area().divide(10000))
                 
                 grid_alertas = grid_alertas.map(add_area)
+                
+                # Extraer datos reducidos de forma segura (sin superar el límite de 5000)
                 geojson_data = grid_alertas.getInfo()
 
             if geojson_data and "features" in geojson_data:
@@ -532,7 +544,7 @@ with tab2:
 
                     folium.GeoJson(
                         geojson_saneado,
-                        name="Cuadrícula de Monitoreo (1 ha)",
+                        name="Cuadrícula de Monitoreo (4 ha)",
                         style_function=estilo_cuadro,
                         tooltip=folium.GeoJsonTooltip(
                             fields=['Unidad_ID', 'Estado', 'Area_Ha'],
