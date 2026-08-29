@@ -310,6 +310,16 @@ if not ok:
 microcuenca_base, geom_base, drenaje, dem = cargar_assets()
 fecha_analisis = obtener_fecha_reciente_satelite()
 
+# 1. Extraer el área en metros cuadrados desde Earth Engine
+area_m2 = geom_base.area().getInfo()
+
+# 2. Convertir a km² y hectáreas
+area_km2 = area_m2 / 1_000_000
+area_ha = area_m2 / 10_000
+
+# 3. Mostrar el dato en la interfaz de Streamlit
+st.info(f"**Área de la microcuenca:** {area_km2:.2f} km² ({area_ha:.2f} ha)")
+
 # BARRA LATERAL CON CONTROLES DE CAPAS Y POLÍGONOS
 with st.sidebar:
     st.header("🎛️ Control de Capas y Zonas")
