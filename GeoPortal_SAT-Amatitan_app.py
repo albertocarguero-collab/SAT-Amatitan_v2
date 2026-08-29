@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión completa: Gráfico Altair SPI-3 en rojo/naranja, áreas en hectáreas, zonas vectorizadas con leyenda, reporte dinámico, integración de datos locales SNET y mapa de humedad del suelo.
+Versión con cuadrícula sintética de 1 hectárea para análisis a pequeña escala.
 """
 
 import datetime
@@ -313,7 +313,7 @@ fecha_analisis = obtener_fecha_reciente_satelite()
 # BARRA LATERAL CON CONTROLES DE CAPAS Y POLÍGONOS
 with st.sidebar:
     st.header("🎛️ Control de Capas y Zonas")
-    ver_poligonos = st.checkbox("Mostrar Zonas Vectorizadas (Polígonos)", value=True)
+    ver_poligonos = st.checkbox("Mostrar Cuadrícula de Manejo (1 ha)", value=True)
     ver_iiss = st.checkbox("Mostrar Susceptibilidad Raster", value=False)
     ver_vci = st.checkbox("Mostrar VCI (Condición Vegetativa)", value=True)
     ver_precip = st.checkbox("Mostrar Precipitación Acumulada (3m)", value=False)
@@ -333,7 +333,7 @@ with st.spinner("Procesando modelos geoespaciales y estadísticas..."):
     estado_general = NOMBRES_ALERTA.get(max(nivel_spi, nivel_vci), "Desconocido")
 
 # PESTAÑAS PRINCIPALES
-tab1, tab2, tab3 = st.tabs(["📊 Monitoreo, Gráfico SPI e Hectáreas", "🗺️ Mapa Detallado por Zonas y Polígonos", "📖 Metodología"])
+tab1, tab2, tab3 = st.tabs(["📊 Monitoreo, Gráfico SPI e Hectáreas", "🗺️ Mapa Detallado (Cuadrícula 1 ha)", "📖 Metodología"])
 
 with tab1:
     st.subheader("Indicadores del Sistema de Alerta Temprana")
@@ -371,7 +371,7 @@ with tab1:
     st.markdown("---")
     
     # -------------------------------------------------------------------------
-    # SECCIÓN: DATOS SNET (NUEVO)
+    # SECCIÓN: DATOS SNET
     # -------------------------------------------------------------------------
     st.subheader("📡 Datos Locales en Tiempo Real (SNET)")
     with st.spinner("Conectando con red telemétrica local..."):
@@ -385,7 +385,7 @@ with tab1:
     st.markdown("---")
     
     # -------------------------------------------------------------------------
-    # SECCIÓN: MAPA INTERACTIVO HUMEDAD SNET (NUEVO)
+    # SECCIÓN: MAPA INTERACTIVO HUMEDAD SNET
     # -------------------------------------------------------------------------
     st.subheader("💧 Humedad del Suelo (Modelo SNET)")
     st.write("Visualización interactiva de las condiciones actuales de humedad superficial a nivel nacional.")
@@ -455,8 +455,8 @@ Proyecto: Microcuenca Amatitán
             )
 
 with tab2:
-    st.subheader("🗺️ Identificación de Áreas y Polígonos por Condición")
-    st.write("Visualización espacial vectorizada para identificar los polígonos correspondientes a cada zona de alerta y humedad.")
+    st.subheader("🗺️ Monitoreo a Nivel de Unidad (Cuadrícula Sintética)")
+    st.write("Visualización espacial mediante una cuadrícula regular de 1 hectárea por cuadro, calculando el estado predominante en cada unidad de terreno.")
 
     tile_url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
     attr_map = "Esri" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
@@ -473,38 +473,41 @@ with tab2:
 
     if ver_poligonos:
         try:
-            pixel_area = ee.Image.pixelArea().divide(10000).rename("area_ha")
-            iiss_con_area = iiss_clase.addBands(pixel_area)
+            with st.spinner("Generando cuadrícula de manejo (1 ha) y procesando alertas..."):
+                proj = ee.Projection('EPSG:3857').atScale(100) 
+                grid_hectareas = geom_base.coveringGrid(proj=proj)
+                unidades_analisis = grid_hectareas.map(lambda f: f.intersection(geom_base, 10))
 
-            vectores_zonas = iiss_con_area.reduceToVectors(
-                geometry=geom_base,
-                scale=150,
-                geometryType='polygon',
-                eightConnected=False,
-                labelProperty='IISS_clase',
-                maxPixels=1e9,
-                reducer=ee.Reducer.first()
-            )
-
-            geojson_data = vectores_zonas.getInfo()
+                grid_alertas = iiss_clase.reduceRegions(
+                    collection=unidades_analisis,
+                    reducer=ee.Reducer.mode().setOutputs(['IISS_clase']),
+                    scale=30
+                )
+                
+                def add_area(f):
+                    return f.set('Area_Ha', f.geometry().area().divide(10000))
+                
+                grid_alertas = grid_alertas.map(add_area)
+                geojson_data = grid_alertas.getInfo()
 
             if geojson_data and "features" in geojson_data:
                 features_validas = []
-                for f in geojson_data["features"]:
+                for idx, f in enumerate(geojson_data["features"]):
                     if f.get("geometry") and f["geometry"].get("coordinates"):
                         props = f.get("properties", {}) or {}
                         
-                        raw_clase = props.get("IISS_clase", props.get("label", 1))
+                        raw_clase = props.get("IISS_clase", 0)
                         try:
                             clase = int(float(raw_clase))
                         except (ValueError, TypeError):
-                            clase = 1
+                            clase = 0
                             
                         props["IISS_clase"] = clase
-                        props["Estado"] = NOMBRES_ALERTA.get(clase, "Desconocido")
+                        props["Estado"] = NOMBRES_ALERTA.get(clase, "Sin Datos")
 
-                        area_val = float(props.get("area_ha", 0.0))
+                        area_val = float(props.get("Area_Ha", 0.0))
                         props["Area_Ha"] = round(area_val, 2)
+                        props["Unidad_ID"] = f"Unidad {idx+1}"
 
                         f["properties"] = props
                         features_validas.append(f)
@@ -515,34 +518,29 @@ with tab2:
                         "features": features_validas
                     }
 
-                    def estilo_poligono(feature):
+                    def estilo_cuadro(feature):
                         props = feature.get('properties', {}) or {}
-                        raw_clase = props.get('IISS_clase', 1)
-                        try:
-                            clase_num = int(float(raw_clase))
-                        except (ValueError, TypeError):
-                            clase_num = 1
-                            
-                        color_hex = COLORES_ALERTA.get(clase_num, "#3388ff")
+                        clase_num = props.get('IISS_clase', 0)
+                        color_hex = COLORES_ALERTA.get(clase_num, "#cccccc") 
 
                         return {
                             'fillColor': color_hex,
-                            'color': '#000000',
+                            'color': '#ffffff',
                             'weight': 1,
                             'fillOpacity': 0.65
                         }
 
                     folium.GeoJson(
                         geojson_saneado,
-                        name="Polígonos de Condición (Zonas)",
-                        style_function=estilo_poligono,
+                        name="Cuadrícula de Monitoreo (1 ha)",
+                        style_function=estilo_cuadro,
                         tooltip=folium.GeoJsonTooltip(
-                            fields=['Estado', 'Area_Ha'],
-                            aliases=['Estado de Alerta:', 'Superficie (ha):']
+                            fields=['Unidad_ID', 'Estado', 'Area_Ha'],
+                            aliases=['Identificador:', 'Estado de Alerta:', 'Superficie (ha):']
                         )
                     ).add_to(mapa)
         except Exception as e:
-            st.warning(f"No se pudieron renderizar los polígonos: {e}")
+            st.warning(f"No se pudo renderizar la cuadrícula sintética: {e}")
 
     legend_html = """
     <div style="
@@ -553,10 +551,10 @@ with tab2:
         box-shadow: 0 0 15px rgba(0,0,0,0.2);">
         <p style="margin:0; font-weight: bold; text-align:center;">Leyenda SAT Sequía</p>
         <hr style="margin: 5px 0;">
-        <i style="background:#fed976; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Vigilancia (~1,250 ha)<br>
-        <i style="background:#fd8d3c; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Prealerta (~820 ha)<br>
-        <i style="background:#fc4e2a; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Alerta (~410 ha)<br>
-        <i style="background:#bd0026; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Emergencia (~150 ha)<br>
+        <i style="background:#fed976; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Vigilancia<br>
+        <i style="background:#fd8d3c; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Prealerta<br>
+        <i style="background:#fc4e2a; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Alerta<br>
+        <i style="background:#bd0026; width:18px; height:18px; float:left; margin-right:8px; opacity:0.8;"></i> Emergencia<br>
     </div>
     """
     mapa.get_root().html.add_child(folium.Element(legend_html))
@@ -567,9 +565,9 @@ with tab2:
 with tab3:
     st.subheader("Metodología del Sistema")
     st.markdown("""
-    * **Zonificación por Polígonos:** Conversión vectorial automática de celdas ráster en polígonos delimitados para un análisis a nivel de polígono por condición y alerta.
+    * **Zonificación por Cuadrícula:** Creación automática de unidades sintéticas regulares (1 hectárea) para evaluar las parcelas agrícolas.
     * **Gráfico SPI-3 en Rojo:** Identificación visual de años secos mediante la paleta de alertas meteorológicas.
-    * **Reporte Dinámico:** Adaptación automática del periodo reportado en meses y rango de fechas disponibles (ej. 3 meses, 6 meses, etc.) para su consulta y exportación.
-    * **Integración SNET:** Ingesta de datos locales del Ministerio de Medio Ambiente (MARN/SNET) para calibrar la validación y confianza de los índices satelitales.
+    * **Reporte Dinámico:** Adaptación automática del periodo reportado en meses y rango de fechas disponibles para su exportación.
+    * **Integración SNET:** Ingesta de datos locales del MARN/SNET para calibrar la validación y confianza de los índices satelitales.
     * **Humedad del Suelo:** Incrustación directa del mapa oficial de humedad proporcionado por el observatorio ambiental nacional.
     """)
