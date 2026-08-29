@@ -471,7 +471,7 @@ with tab2:
     if ver_precip and img_precip is not None:
         agregar_capa_ee(mapa, img_precip, {"min": 50, "max": 400, "palette": ["#b2182b", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "Precipitación Acumulada 3m", opacity=0.5)
 
-   if ver_poligonos:
+    if ver_poligonos:
         try:
             with st.spinner("Generando cuadrícula de manejo (4 ha) y procesando alertas..."):
                 # 1. Definir la cuadrícula (escala 200 = 4 hectáreas aprox)
