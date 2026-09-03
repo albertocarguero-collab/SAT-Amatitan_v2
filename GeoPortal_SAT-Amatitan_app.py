@@ -471,15 +471,16 @@ with tab2:
     tile_url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
     attr_map = "Esri" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
    
-# 1. Obtener las coordenadas del centroide desde Earth Engine
-# getInfo()['coordinates'] devuelve una lista [Longitud, Latitud]
-centroide = geom_base.centroid().getInfo()['coordinates']
+    # 1. Obtener las coordenadas del centroide desde Earth Engine
+    
+    # getInfo()['coordinates'] devuelve una lista [Longitud, Latitud]
+    centroide = geom_base.centroid().getInfo()['coordinates']
 
-# 2. Invertir el orden para Folium, que requiere [Latitud, Longitud]
-lat_centro, lon_centro = centroide[1], centroide[0]
+    # 2. Invertir el orden para Folium, que requiere [Latitud, Longitud]
+    lat_centro, lon_centro = centroide[1], centroide[0]
 
-# 3. Inicializar el mapa orientado al centroide
-mapa = folium.Map(location=[lat_centro, lon_centro], zoom_start=13, tiles=tile_url, attr=attr_map)
+    # 3. Inicializar el mapa orientado al centroide
+    mapa = folium.Map(location=[lat_centro, lon_centro], zoom_start=13, tiles=tile_url, attr=attr_map)
 
     if ver_iiss:
         agregar_capa_ee(mapa, iiss_clase, {"min": 1, "max": 4, "palette": ["#fed976", "#fd8d3c", "#fc4e2a", "#bd0026"]}, "IISS (Susceptibilidad Raster)", opacity=0.5)
