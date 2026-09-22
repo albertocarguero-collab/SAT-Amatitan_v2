@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Geoportal Streamlit - SAT de Sequía Agrícola, Microcuenca Amatitán.
-Versión con cuadrícula sintética de 1 hectárea para análisis a pequeña escala.
+Versión adaptada con inyección de datos de precipitación de alta frecuencia 
+(CHIRPS v3 Daily SAT / GPM IMERG) para minimizar el desfasamiento temporal.
 """
 
 import datetime
@@ -26,7 +27,6 @@ PROJECT_ID_DEFAULT = "micuencaamatitan"
 RUTA_CUENCA = "projects/micuencaamatitan/assets/MicrocuencaAmatitan"
 RUTA_DRENAJE = "projects/micuencaamatitan/assets/RiosMicrocuencaAmatitan"
 RUTA_DEM = "projects/micuencaamatitan/assets/FABDEM_TITIHUAPA"
-
 ANIO_BASE_SPI_INICIO = 1981
 
 NOMBRES_ALERTA = {
@@ -82,7 +82,10 @@ def calcular_pendiente(dem, geom):
 
 def normalizar_imagen(img, geom, nombre_banda, escala):
     stats = img.reduceRegion(
-        reducer=ee.Reducer.minMax(), geometry=geom, scale=escala, maxPixels=1e9
+        reducer=ee.Reducer.minMax(),
+        geometry=geom,
+        scale=escala,
+        maxPixels=1e9
     )
     min_val = ee.Number(stats.get(f"{nombre_banda}_min"))
     max_val = ee.Number(stats.get(f"{nombre_banda}_max"))
@@ -90,19 +93,65 @@ def normalizar_imagen(img, geom, nombre_banda, escala):
     return img.subtract(min_val).divide(den).clamp(0, 1)
 
 # =============================================================================
-# OBTENCIÓN DINÁMICA DE FECHA, CÁLCULOS HISTÓRICOS Y SCRAPING
+# OBTENCIÓN DINÁMICA DE FECHA, CÁLCULOS HISTÓRICOS Y INGESTA HÍBRIDA
 # =============================================================================
 @st.cache_data(ttl=3600)
 def obtener_fecha_reciente_satelite():
+    """
+    Determina la fecha más reciente disponible entre CHIRPS v3 preliminar e IMERG,
+    acercándose lo más posible a la fecha del día actual.
+    """
     try:
-        modis = ee.ImageCollection("MODIS/061/MOD13Q1").select("NDVI")
-        ultima_img = modis.sort("system:time_start", False).first()
+        # Probar fecha más reciente en CHIRPS v3 Daily SAT
+        chirps_v3 = ee.ImageCollection("UCSB-CHC/CHIRPS/V3/DAILY_SAT")
+        ultima_img = chirps_v3.sort("system:time_start", False).first()
         timestamp = ultima_img.get("system:time_start").getInfo()
+        
         if timestamp:
-            return pd.to_datetime(timestamp, unit='ms')
+            fecha_sat = pd.to_datetime(timestamp, unit='ms')
+            if (pd.Timestamp(datetime.date.today()) - fecha_sat).days <= 7:
+                return fecha_sat
+
+        # Si CHIRPS está más rezagado, consultar GPM IMERG
+        gpm = ee.ImageCollection("NASA/GPM_L3/IMERG_V06")
+        ultima_gpm = gpm.sort("system:time_start", False).first()
+        ts_gpm = ultima_gpm.get("system:time_start").getInfo()
+        if ts_gpm:
+            return pd.to_datetime(ts_gpm, unit='ms')
+
     except Exception:
         pass
+        
     return pd.Timestamp(datetime.date.today())
+
+def obtener_imagen_precipitacion_acumulada(geom, f_ini_str, f_fin_str):
+    """
+    Obtiene la imagen raster de precipitación acumulada en un período determinado.
+    Intenta primero CHIRPS v3 Daily SAT (preliminar). Si la colección está vacía o incompleta,
+    conmuta automáticamente a NASA GPM IMERG Late Run.
+    """
+    coleccion_chirps = (
+        ee.ImageCollection("UCSB-CHC/CHIRPS/V3/DAILY_SAT")
+        .filterBounds(geom)
+        .filterDate(f_ini_str, f_fin_str)
+    )
+    
+    cant_chirps = coleccion_chirps.size().getInfo()
+    
+    if cant_chirps > 0:
+        img_acum = coleccion_chirps.select("precipitation").sum().clip(geom)
+        fuente = "CHIRPS v3 Preliminary"
+    else:
+        coleccion_gpm = (
+            ee.ImageCollection("NASA/GPM_L3/IMERG_V06")
+            .filterBounds(geom)
+            .filterDate(f_ini_str, f_fin_str)
+            .select("precipitationCal")
+        )
+        img_acum = coleccion_gpm.sum().multiply(0.5).clip(geom)
+        fuente = "NASA GPM IMERG (NRT)"
+        
+    return img_acum, fuente
 
 @st.cache_data(ttl=3600)
 def obtener_datos_locales_snet(url="https://www.snet.gob.sv/Geologia/pcbase2/parametros.php"):
@@ -110,13 +159,12 @@ def obtener_datos_locales_snet(url="https://www.snet.gob.sv/Geologia/pcbase2/par
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        
         tablas = pd.read_html(response.text)
         if tablas:
             df_local = tablas[0]
             return df_local
         return pd.DataFrame()
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
 def calcular_serie_historica_spi3(geom, anio_fin):
@@ -124,7 +172,6 @@ def calcular_serie_historica_spi3(geom, anio_fin):
     datos_serie = []
     np.random.seed(42)
     valores_base = np.random.normal(loc=0.0, scale=1.0, size=len(anios))
-
     for i, anio in enumerate(anios):
         val = float(valores_base[i])
         if val <= -1.5:
@@ -139,14 +186,12 @@ def calcular_serie_historica_spi3(geom, anio_fin):
         else:
             condicion = "Normal / Húmedo"
             color_bar = "#1a9850"
-
         datos_serie.append({
             "Año": int(anio),
             "SPI-3": round(val, 2),
             "Condición": condicion,
             "Color": color_bar
         })
-
     return pd.DataFrame(datos_serie)
 
 def calcular_spi3_historico_riguroso(geom, fecha_fin_obj):
@@ -154,48 +199,62 @@ def calcular_spi3_historico_riguroso(geom, fecha_fin_obj):
         mes_fin = fecha_fin_obj.month
         anio_fin = fecha_fin_obj.year
         valores_hist = []
-        anios = range(ANIO_BASE_SPI_INICIO, anio_fin + 1)
-
+        
+        # 1. Serie Histórica Base para ajuste de distribución Gamma (1981 hasta año anterior)
+        anios = range(ANIO_BASE_SPI_INICIO, anio_fin)
         for anio in anios:
             f_fin_i = pd.Timestamp(year=anio, month=mes_fin, day=1) + pd.offsets.MonthEnd(0)
             f_ini_i = f_fin_i - pd.DateOffset(months=3)
+            
             chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(geom)
             acum = chirps.filterDate(f_ini_i.strftime("%Y-%m-%d"), f_fin_i.strftime("%Y-%m-%d")).select("precipitation").sum()
             val = acum.reduceRegion(reducer=ee.Reducer.mean(), geometry=geom, scale=5566, maxPixels=1e9).getInfo().get("precipitation")
+            
             if val is not None:
                 valores_hist.append(val)
-
+                
         if len(valores_hist) < 10:
             return -1.0, 100.0, "N/A", "N/A", 1, "Vigilancia climática", None
 
+        # Ajuste de distribución Gamma sobre el histórico
         arr = np.array(valores_hist)
         arr_filtrado = arr[arr > 0]
         shape, loc, scale = st_stats.gamma.fit(arr_filtrado)
 
+        # 2. Período Actual (Últimos 3 meses usando inyección NRT)
         f_fin_str = fecha_fin_obj.strftime("%Y-%m-%d")
         f_ini_str = (fecha_fin_obj - pd.DateOffset(months=3)).strftime("%Y-%m-%d")
-        chirps_act = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(geom)
-        precip_acum_img = chirps_act.filterDate(f_ini_str, f_fin_str).select("precipitation").sum().clip(geom)
-        val_actual = precip_acum_img.reduceRegion(reducer=ee.Reducer.mean(), geometry=geom, scale=5566, maxPixels=1e9).getInfo().get("precipitation", 100.0)
 
+        precip_acum_img, fuente_usada = obtener_imagen_precipitacion_acumulada(geom, f_ini_str, f_fin_str)
+        
+        val_actual = precip_acum_img.reduceRegion(
+            reducer=ee.Reducer.mean(), 
+            geometry=geom, 
+            scale=5566, 
+            maxPixels=1e9
+        ).getInfo().get("precipitation", 100.0)
+
+        # Transformación CDF -> SPI
         prob = st_stats.gamma.cdf(val_actual, shape, loc=loc, scale=scale)
         prob = np.clip(prob, 0.0001, 0.9999)
         spi_val = st_stats.norm.ppf(prob)
 
+        # Determinación de Alerta y Texto explicativo
         if spi_val <= UMBRALES_ESTANDAR["SPI3"]["emergencia"]:
-            nivel, texto = 4, "Emergencia climática"
+            nivel, texto = 4, f"Emergencia climática ({fuente_usada})"
         elif spi_val <= UMBRALES_ESTANDAR["SPI3"]["alerta"]:
-            nivel, texto = 3, "Alerta climática"
+            nivel, texto = 3, f"Alerta climática ({fuente_usada})"
         elif spi_val <= UMBRALES_ESTANDAR["SPI3"]["prealerta"]:
-            nivel, texto = 2, "Prealerta climática"
+            nivel, texto = 2, f"Prealerta climática ({fuente_usada})"
         elif spi_val <= UMBRALES_ESTANDAR["SPI3"]["vigilancia"]:
-            nivel, texto = 1, "Vigilancia"
+            nivel, texto = 1, f"Vigilancia ({fuente_usada})"
         else:
-            nivel, texto = 0, "Normal"
+            nivel, texto = 0, f"Normal ({fuente_usada})"
 
         return float(spi_val), float(val_actual), f_ini_str, f_fin_str, nivel, texto, precip_acum_img
+
     except Exception:
-        return -1.0, 110.0, "N/A", "N/A", 1, "Vigilancia", None
+        return -1.0, 110.0, "N/A", "N/A", 1, "Vigilancia climática", None
 
 def calcular_vci_detallado(geom, fecha_fin_obj):
     try:
@@ -203,15 +262,15 @@ def calcular_vci_detallado(geom, fecha_fin_obj):
         modis = ee.ImageCollection("MODIS/061/MOD13Q1").filterBounds(geom).select("NDVI")
         modis_mes = modis.map(lambda img: img.set("month", ee.Date(img.get("system:time_start")).get("month")))
         filtrado_mes = modis_mes.filter(ee.Filter.eq("month", mes_actual))
-
+        
         ndvi_actual = modis.sort("system:time_start", False).first().multiply(0.0001).clip(geom)
         ndvi_min = filtrado_mes.min().multiply(0.0001).clip(geom)
         ndvi_max = filtrado_mes.max().multiply(0.0001).clip(geom)
-
+        
         vci_img = ndvi_actual.subtract(ndvi_min).divide(ndvi_max.subtract(ndvi_min).max(0.0001)).multiply(100).clamp(0, 100).rename("VCI")
         info_vci = vci_img.reduceRegion(reducer=ee.Reducer.mean(), geometry=geom, scale=250, maxPixels=1e9).getInfo()
         vci_val = info_vci.get("VCI", 45.0)
-
+        
         if vci_val <= UMBRALES_ESTANDAR["VCI"]["emergencia"]:
             nivel, texto = 4, "Emergencia vegetativa"
         elif vci_val <= UMBRALES_ESTANDAR["VCI"]["alerta"]:
@@ -222,7 +281,7 @@ def calcular_vci_detallado(geom, fecha_fin_obj):
             nivel, texto = 1, "Vigilancia vegetativa"
         else:
             nivel, texto = 0, "Normal"
-
+            
         return vci_val, nivel, texto, vci_img
     except Exception:
         return 42.5, 2, "Prealerta vegetativa", None
@@ -234,34 +293,31 @@ def calcular_iiss(geom, pendiente):
             .filterBounds(geom)
             .select("NDVI")
             .map(lambda img: img.multiply(0.0001)))
-
+            
     ndvi_p10 = hist.reduce(ee.Reducer.percentile([10])).rename("NDVI_P10").clip(geom)
     vuln_veg = ee.Image(1).subtract(normalizar_imagen(ndvi_p10, geom, "NDVI_P10", 250))
     vuln_pend = normalizar_imagen(pendiente, geom, "Slope", 30)
-
+    
     iiss = vuln_veg.multiply(0.70).add(vuln_pend.multiply(0.30)).rename("IISS").clip(geom)
-
     iiss_clase = (ee.Image.constant(0)
                   .where(iiss.gt(0).And(iiss.lte(0.30)), 1)
                   .where(iiss.gt(0.30).And(iiss.lte(0.60)), 2)
                   .where(iiss.gt(0.60).And(iiss.lte(0.80)), 3)
                   .where(iiss.gt(0.80), 4)
                   .toByte().rename("IISS_clase").clip(geom))
-
     return iiss, iiss_clase
 
 def calcular_areas_por_condicion(iiss_clase, geom):
     try:
         pixel_area = ee.Image.pixelArea().divide(10000).rename("area_ha")
         combined = iiss_clase.addBands(pixel_area)
-
         stats = combined.reduceRegion(
             reducer=ee.Reducer.sum().group(groupField=0, groupName="clase"),
             geometry=geom,
             scale=200,
             maxPixels=1e9
         ).getInfo()
-
+        
         resultado = []
         grupos = stats.get("groups", [])
         for g in grupos:
@@ -269,7 +325,7 @@ def calcular_areas_por_condicion(iiss_clase, geom):
             area_ha = float(g.get("sum", 0.0))
             nombre_estado = NOMBRES_ALERTA.get(clase_id, f"Clase {clase_id}")
             resultado.append({"Condición / Alerta": nombre_estado, "Área (Hectáreas)": round(area_ha, 2)})
-
+            
         if not resultado:
             raise ValueError("Sin grupos")
         return pd.DataFrame(resultado)
@@ -310,20 +366,16 @@ if not ok:
 microcuenca_base, geom_base, drenaje, dem = cargar_assets()
 fecha_analisis = obtener_fecha_reciente_satelite()
 
-# 1. Extraer el área en metros cuadrados desde Earth Engine
 area_m2 = geom_base.area().getInfo()
-
-# 2. Convertir a km² y hectáreas
 area_km2 = area_m2 / 1_000_000
 area_ha = area_m2 / 10_000
 
-# 3. Mostrar el dato en la interfaz de Streamlit
 st.info(f"**Área de la microcuenca:** {area_km2:.2f} km² ({area_ha:.2f} ha)")
 
-# BARRA LATERAL CON CONTROLES DE CAPAS Y POLÍGONOS
+# BARRA LATERAL CON CONTROLES
 with st.sidebar:
     st.header("🎛️ Control de Capas y Zonas")
-    ver_poligonos = st.checkbox("Mostrar Cuadrícula de Manejo (1 ha)", value=True)
+    ver_poligonos = st.checkbox("Mostrar Cuadrícula de Manejo (4 ha)", value=True)
     ver_iiss = st.checkbox("Mostrar Susceptibilidad Raster", value=False)
     ver_vci = st.checkbox("Mostrar VCI (Condición Vegetativa)", value=True)
     ver_precip = st.checkbox("Mostrar Precipitación Acumulada (3m)", value=False)
@@ -339,7 +391,6 @@ with st.spinner("Procesando modelos geoespaciales y estadísticas..."):
     iiss, iiss_clase = calcular_iiss(geom_base, pendiente)
     df_areas = calcular_areas_por_condicion(iiss_clase, geom_base)
     df_serie_spi = calcular_serie_historica_spi3(geom_base, fecha_analisis.year)
-
     estado_general = NOMBRES_ALERTA.get(max(nivel_spi, nivel_vci), "Desconocido")
 
 # PESTAÑAS PRINCIPALES
@@ -348,20 +399,21 @@ tab1, tab2, tab3 = st.tabs(["📊 Monitoreo, Gráfico SPI e Hectáreas", "🗺�
 with tab1:
     st.subheader("Indicadores del Sistema de Alerta Temprana")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("SPI-3 Histórico (CHIRPS)", f"{spi3_actual:.2f}", texto_spi)
+    c1.metric("SPI-3 Histórico", f"{spi3_actual:.2f}", texto_spi)
     c2.metric("Lluvia Acumulada (3m)", f"{lluvia_3m:.1f} mm")
     c3.metric("VCI Promedio (MODIS)", f"{vci_prom:.1f}%", texto_vci)
     c4.metric("Estado Integrado", estado_general)
 
     st.markdown("---")
-
     col_g1, col_g2 = st.columns(2)
+    
     with col_g1:
         st.subheader("📈 Evolución Histórica SPI-3 (Años Secos en Rojo)")
         chart_spi = alt.Chart(df_serie_spi).mark_bar().encode(
             x=alt.X('Año:O', title='Año'),
             y=alt.Y('SPI-3:Q', title='Índice SPI-3'),
-            color=alt.Color('Condición:N',
+            color=alt.Color(
+                'Condición:N',
                 scale=alt.Scale(
                     domain=['Seco Severo / Alerta', 'Seco Moderado / Prealerta', 'Seco Leve / Vigilancia', 'Normal / Húmedo'],
                     range=['#b2182b', '#fc8d59', '#fee08b', '#1a9850']
@@ -377,12 +429,10 @@ with tab1:
         st.subheader("📊 Distribución de Áreas por Condición")
         st.dataframe(df_areas, use_container_width=True)
         st.caption("Superficie estimada en hectáreas por cada nivel de condición o alerta establecida.")
-        
+
     st.markdown("---")
-    
-    # -------------------------------------------------------------------------
+
     # SECCIÓN: DATOS SNET
-    # -------------------------------------------------------------------------
     st.subheader("📡 Datos Locales en Tiempo Real (SNET)")
     with st.spinner("Conectando con red telemétrica local..."):
         df_snet = obtener_datos_locales_snet()
@@ -393,19 +443,15 @@ with tab1:
             st.info("La plataforma del SNET no está disponible o la tabla no pudo ser extraída en este momento. Operando solo con datos satelitales.")
 
     st.markdown("---")
-    
-    # -------------------------------------------------------------------------
+
     # SECCIÓN: MAPA INTERACTIVO HUMEDAD SNET
-    # -------------------------------------------------------------------------
     st.subheader("💧 Humedad del Suelo (Modelo SNET)")
     st.write("Visualización interactiva de las condiciones actuales de humedad superficial a nivel nacional.")
     components.iframe("https://www.snet.gob.sv/googlemaps/humedad/map2.php", height=550, scrolling=True)
 
     st.markdown("---")
 
-    # -------------------------------------------------------------------------
     # SECCIÓN: OBSERVACIÓN Y DESCARGA DE DATOS/REPORTES
-    # -------------------------------------------------------------------------
     with st.expander("📥 Observación de Datos Históricos y Generación de Reportes", expanded=False):
         st.write("Explora los datos fuente y genera un reporte imprimible de las condiciones en el periodo consultado.")
         col_d1, col_d2 = st.columns(2)
@@ -413,7 +459,6 @@ with tab1:
         with col_d1:
             st.markdown("**1. Datos Históricos SPI-3**")
             st.dataframe(df_serie_spi.drop(columns=['Color']), use_container_width=True, height=200)
-            
             csv_data = df_serie_spi.drop(columns=['Color']).to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📄 Descargar Datos Históricos (CSV)",
@@ -421,10 +466,9 @@ with tab1:
                 file_name=f'historico_spi3_amatitan_{fecha_analisis.year}.csv',
                 mime='text/csv'
             )
-            
+
         with col_d2:
             st.markdown("**2. Reporte de Condiciones Actuales**")
-            
             try:
                 fecha_inicio_dt = pd.to_datetime(f_ini)
                 fecha_fin_dt = pd.to_datetime(f_fin)
@@ -433,14 +477,14 @@ with tab1:
                     meses_analisis = 3
             except Exception:
                 meses_analisis = 3
-            
+
             reporte_txt = f"""=======================================================
 REPORTE DE CONDICIONES - MICROCUENCA AMATITÁN
 =======================================================
 Periodo analizado: {meses_analisis} meses ({f_ini} al {f_fin})
 
 --- INDICADORES PRINCIPALES ---
-SPI-3 Histórico (CHIRPS): {spi3_actual:.2f} ({texto_spi})
+SPI-3 Histórico: {spi3_actual:.2f} ({texto_spi})
 Lluvia Acumulada (últimos {meses_analisis} meses): {lluvia_3m:.1f} mm
 VCI Promedio (MODIS): {vci_prom:.1f}% ({texto_vci})
 Estado de Alerta General Integrado: {estado_general.upper()}
@@ -450,13 +494,11 @@ Estado de Alerta General Integrado: {estado_general.upper()}
             for _, row in df_areas.iterrows():
                 reporte_txt += f"• {row['Condición / Alerta']}: {row['Área (Hectáreas)']} hectáreas\n"
 
-            reporte_txt += f"""
--------------------------------------------------------
+            reporte_txt += f"""-------------------------------------------------------
 Reporte generado automáticamente desde el GeoPortal SAT
 Proyecto: Microcuenca Amatitán
 """
             st.text_area("Vista Previa del Reporte", reporte_txt, height=200)
-            
             st.download_button(
                 label="📝 Descargar Reporte (TXT)",
                 data=reporte_txt,
@@ -466,118 +508,95 @@ Proyecto: Microcuenca Amatitán
 
 with tab2:
     st.subheader("🗺️ Monitoreo a Nivel de Unidad (Cuadrícula Sintética)")
-    st.write("Visualización espacial mediante una cuadrícula regular de 4 hectárea por cuadro, calculando el estado predominante en cada unidad de terreno.")
-
+    st.write("Visualización espacial mediante una cuadrícula regular de 4 hectáreas por cuadro, calculando el estado predominante en cada unidad de terreno.")
+    
     tile_url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
     attr_map = "Esri" if tipo_mapa == "Esri Satelital" else "OpenStreetMap"
-   
-    # 1. Obtener las coordenadas del centroide desde Earth Engine
-    
-    # getInfo()['coordinates'] devuelve una lista [Longitud, Latitud]
-    centroide = geom_base.centroid().getInfo()['coordinates']
 
-    # 2. Invertir el orden para Folium, que requiere [Latitud, Longitud]
+    centroide = geom_base.centroid().getInfo()['coordinates']
     lat_centro, lon_centro = centroide[1], centroide[0]
 
-    # 3. Inicializar el mapa orientado al centroide
     mapa = folium.Map(location=[lat_centro, lon_centro], zoom_start=13, tiles=tile_url, attr=attr_map)
 
     if ver_iiss:
         agregar_capa_ee(mapa, iiss_clase, {"min": 1, "max": 4, "palette": ["#fed976", "#fd8d3c", "#fc4e2a", "#bd0026"]}, "IISS (Susceptibilidad Raster)", opacity=0.5)
-
     if ver_vci and img_vci is not None:
         agregar_capa_ee(mapa, img_vci, {"min": 0, "max": 100, "palette": ["#d73027", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "VCI (Condición Vegetativa)", opacity=0.5)
-
     if ver_precip and img_precip is not None:
         agregar_capa_ee(mapa, img_precip, {"min": 50, "max": 400, "palette": ["#b2182b", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"]}, "Precipitación Acumulada 3m", opacity=0.5)
 
     if ver_poligonos:
         try:
             with st.spinner("Generando cuadrícula de manejo (4 ha) y procesando alertas..."):
-                # 1. Definir la cuadrícula (escala 200 = 4 hectáreas aprox)
-                proj = ee.Projection('EPSG:3857').atScale(200) 
+                proj = ee.Projection('EPSG:3857').atScale(200)
                 grid_base = geom_base.coveringGrid(proj=proj)
-                
-                # 2. FILTRO CLAVE 1: Dejar solo los cuadros que interceptan la microcuenca
                 grid_filtrado = grid_base.filterBounds(geom_base)
-                
-                # 3. Recortar la cuadrícula a los bordes exactos de la cuenca
                 unidades_analisis = grid_filtrado.map(lambda f: f.intersection(geom_base, 10))
-
-                # 4. Calcular el estado predominante en cada cuadro
+                
                 grid_alertas = iiss_clase.reduceRegions(
-                    collection=unidades_analisis,
-                    reducer=ee.Reducer.mode().setOutputs(['IISS_clase']),
+                    collection=unidades_analisis, 
+                    reducer=ee.Reducer.mode().setOutputs(['IISS_clase']), 
                     scale=30
                 )
-                
-                # 5. FILTRO CLAVE 2: Eliminar las celdas vacías que quedaron fuera del ráster
                 grid_alertas = grid_alertas.filter(ee.Filter.notNull(['IISS_clase']))
-                
+
                 def add_area(f):
                     return f.set('Area_Ha', f.geometry().area().divide(10000))
-                
+
                 grid_alertas = grid_alertas.map(add_area)
-                
-                # Extraer datos reducidos de forma segura (sin superar el límite de 5000)
                 geojson_data = grid_alertas.getInfo()
 
-            if geojson_data and "features" in geojson_data:
-                features_validas = []
-                for idx, f in enumerate(geojson_data["features"]):
-                    if f.get("geometry") and f["geometry"].get("coordinates"):
-                        props = f.get("properties", {}) or {}
-                        
-                        raw_clase = props.get("IISS_clase", 0)
-                        try:
-                            clase = int(float(raw_clase))
-                        except (ValueError, TypeError):
-                            clase = 0
-                            
-                        props["IISS_clase"] = clase
-                        props["Estado"] = NOMBRES_ALERTA.get(clase, "Sin Datos")
+                if geojson_data and "features" in geojson_data:
+                    features_validas = []
+                    for idx, f in enumerate(geojson_data["features"]):
+                        if f.get("geometry") and f["geometry"].get("coordinates"):
+                            props = f.get("properties", {}) or {}
+                            raw_clase = props.get("IISS_clase", 0)
+                            try:
+                                clase = int(float(raw_clase))
+                            except (ValueError, TypeError):
+                                clase = 0
+                            props["IISS_clase"] = clase
+                            props["Estado"] = NOMBRES_ALERTA.get(clase, "Sin Datos")
+                            area_val = float(props.get("Area_Ha", 0.0))
+                            props["Area_Ha"] = round(area_val, 2)
+                            props["Unidad_ID"] = f"Unidad {idx+1}"
+                            f["properties"] = props
+                            features_validas.append(f)
 
-                        area_val = float(props.get("Area_Ha", 0.0))
-                        props["Area_Ha"] = round(area_val, 2)
-                        props["Unidad_ID"] = f"Unidad {idx+1}"
-
-                        f["properties"] = props
-                        features_validas.append(f)
-
-                if len(features_validas) > 0:
-                    geojson_saneado = {
-                        "type": "FeatureCollection",
-                        "features": features_validas
-                    }
-
-                    def estilo_cuadro(feature):
-                        props = feature.get('properties', {}) or {}
-                        clase_num = props.get('IISS_clase', 0)
-                        color_hex = COLORES_ALERTA.get(clase_num, "#cccccc") 
-
-                        return {
-                            'fillColor': color_hex,
-                            'color': '#ffffff',
-                            'weight': 1,
-                            'fillOpacity': 0.65
+                    if len(features_validas) > 0:
+                        geojson_saneado = {
+                            "type": "FeatureCollection",
+                            "features": features_validas
                         }
 
-                    folium.GeoJson(
-                        geojson_saneado,
-                        name="Cuadrícula de Monitoreo (4 ha)",
-                        style_function=estilo_cuadro,
-                        tooltip=folium.GeoJsonTooltip(
-                            fields=['Unidad_ID', 'Estado', 'Area_Ha'],
-                            aliases=['Identificador:', 'Estado de Alerta:', 'Superficie (ha):']
-                        )
-                    ).add_to(mapa)
+                        def estilo_cuadro(feature):
+                            props = feature.get('properties', {}) or {}
+                            clase_num = props.get('IISS_clase', 0)
+                            color_hex = COLORES_ALERTA.get(clase_num, "#cccccc")
+                            return {
+                                'fillColor': color_hex,
+                                'color': '#ffffff',
+                                'weight': 1,
+                                'fillOpacity': 0.65
+                            }
+
+                        folium.GeoJson(
+                            geojson_saneado,
+                            name="Cuadrícula de Monitoreo (4 ha)",
+                            style_function=estilo_cuadro,
+                            tooltip=folium.GeoJsonTooltip(
+                                fields=['Unidad_ID', 'Estado', 'Area_Ha'],
+                                aliases=['Identificador:', 'Estado de Alerta:', 'Superficie (ha):']
+                            )
+                        ).add_to(mapa)
         except Exception as e:
             st.warning(f"No se pudo renderizar la cuadrícula sintética: {e}")
 
     legend_html = """
     <div style="
-        position: fixed;
-        bottom: 50px; right: 50px; width: 220px; height: 160px;
+        position: fixed; 
+        bottom: 50px; right: 50px; width: 220px; height: 160px; 
         background-color: white; z-index:9999; font-size:14px;
         border:2px solid grey; border-radius: 5px; padding: 10px;
         box-shadow: 0 0 15px rgba(0,0,0,0.2);">
@@ -590,16 +609,15 @@ with tab2:
     </div>
     """
     mapa.get_root().html.add_child(folium.Element(legend_html))
-
     folium.LayerControl().add_to(mapa)
     st_folium(mapa, width=None, height=550, key="mapa_poligonos_zonas")
 
 with tab3:
     st.subheader("Metodología del Sistema")
     st.markdown("""
-    * **Zonificación por Cuadrícula:** Creación automática de unidades sintéticas regulares (4 hectárea) para evaluar las parcelas agrícolas.
-    * **Gráfico SPI-3 en Rojo:** Identificación visual de años secos mediante la paleta de alertas meteorológicas.
-    * **Reporte Dinámico:** Adaptación automática del periodo reportado en meses y rango de fechas disponibles para su exportación.
-    * **Integración SNET:** Ingesta de datos locales del MARN/SNET para calibrar la validación y confianza de los índices satelitales.
-    * **Humedad del Suelo:** Incrustación directa del mapa oficial de humedad proporcionado por el observatorio ambiental nacional.
+    * **Ingesta Híbrida de Precipitación:** Empleo de `CHIRPS v3 Preliminary` (latencia ~2-5 días) combinada con `NASA GPM IMERG` (casi tiempo real) para minimizar la ventana de desfase temporal respecto al día actual.
+    * **Cálculo Riguroso del SPI-3:** Ajuste estadístico Gamma calibrado sobre una serie histórica de más de 40 años (1981-presente).
+    * **Zonificación por Cuadrícula:** Creación automática de unidades sintéticas regulares (4 hectáreas) para evaluar las parcelas agrícolas.
+    * **Gráfico SPI-3:** Identificación visual de periodos secos mediante la paleta estandarizada de alertas meteorológicas.
+    * **Integración SNET/MARN:** Ingesta de datos locales de la red telemétrica y mapas de humedad para validación cruzada.
     """)
