@@ -98,58 +98,47 @@ def normalizar_imagen(img, geom, nombre_banda, escala):
 @st.cache_data(ttl=3600)
 def obtener_fecha_reciente_satelite():
     """
-    Determina la fecha más reciente disponible entre CHIRPS v3 preliminar e IMERG,
-    acercándose lo más posible a la fecha del día actual.
+    En lugar de consultar el rezago del satélite (que puede ser de meses),
+    fijamos la fecha de análisis al día de ayer. Así garantizamos que 
+    la ventana de 3 meses termine prácticamente en el día actual.
     """
-    try:
-        # Probar fecha más reciente en CHIRPS v3 Daily SAT
-        chirps_v3 = ee.ImageCollection("UCSB-CHC/CHIRPS/V3/DAILY_SAT")
-        ultima_img = chirps_v3.sort("system:time_start", False).first()
-        timestamp = ultima_img.get("system:time_start").getInfo()
-        
-        if timestamp:
-            fecha_sat = pd.to_datetime(timestamp, unit='ms')
-            if (pd.Timestamp(datetime.date.today()) - fecha_sat).days <= 7:
-                return fecha_sat
-
-        # Si CHIRPS está más rezagado, consultar GPM IMERG
-        gpm = ee.ImageCollection("NASA/GPM_L3/IMERG_V06")
-        ultima_gpm = gpm.sort("system:time_start", False).first()
-        ts_gpm = ultima_gpm.get("system:time_start").getInfo()
-        if ts_gpm:
-            return pd.to_datetime(ts_gpm, unit='ms')
-
-    except Exception:
-        pass
-        
-    return pd.Timestamp(datetime.date.today())
+    # Establece la fecha objetivo como 'Hoy menos 1 día' (100% seguro de tener datos NRT)
+    fecha_ayer = datetime.date.today() - datetime.timedelta(days=1)
+    return pd.Timestamp(fecha_ayer)
 
 def obtener_imagen_precipitacion_acumulada(geom, f_ini_str, f_fin_str):
     """
-    Obtiene la imagen raster de precipitación acumulada en un período determinado.
-    Intenta primero CHIRPS v3 Daily SAT (preliminar). Si la colección está vacía o incompleta,
-    conmuta automáticamente a NASA GPM IMERG Late Run.
+    Intenta usar CHIRPS Daily. Si CHIRPS aún no tiene datos completos para
+    el período (por su rezago normal), conmuta a JAXA GSMaP Operational (4 hrs de rezago).
     """
     coleccion_chirps = (
-        ee.ImageCollection("UCSB-CHC/CHIRPS/V3/DAILY_SAT")
+        ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
         .filterBounds(geom)
         .filterDate(f_ini_str, f_fin_str)
     )
     
     cant_chirps = coleccion_chirps.size().getInfo()
     
-    if cant_chirps > 0:
+    # Calculamos cuántos días tiene el periodo de los 3 meses (aprox 90-92 días)
+    dias_esperados = (pd.to_datetime(f_fin_str) - pd.to_datetime(f_ini_str)).days
+    
+    # Si CHIRPS tiene al menos el 90% de los días, usamos CHIRPS
+    if cant_chirps >= (dias_esperados * 0.9):
         img_acum = coleccion_chirps.select("precipitation").sum().clip(geom)
-        fuente = "CHIRPS v3 Preliminary"
+        fuente = "CHIRPS Daily"
     else:
-        coleccion_gpm = (
-            ee.ImageCollection("NASA/GPM_L3/IMERG_V06")
+        # Fallback a JAXA GSMaP Operational (Near Real-Time)
+        # Se actualiza cada hora. La banda hourlyPrecipRate está en mm/hr.
+        coleccion_gsmap = (
+            ee.ImageCollection("JAXA/GPM_L3/GSMaP/v6/operational")
             .filterBounds(geom)
             .filterDate(f_ini_str, f_fin_str)
-            .select("precipitationCal")
+            .select("hourlyPrecipRate")
         )
-        img_acum = coleccion_gpm.sum().multiply(0.5).clip(geom)
-        fuente = "NASA GPM IMERG (NRT)"
+        
+        # Al sumar las imágenes horarias (mm/hr), obtenemos la precipitación total acumulada
+        img_acum = coleccion_gsmap.sum().clip(geom)
+        fuente = "JAXA GSMaP (Operacional NRT)"
         
     return img_acum, fuente
 
